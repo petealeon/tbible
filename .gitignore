@@ -1,0 +1,12 @@
+# Generated databases
+*.db
+data/*.db
+
+# Python artifacts
+__pycache__/
+*.pyc
+
+# General
+.DS_Store
+*.tar.gz
+tbible.backup.*

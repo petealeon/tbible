@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=Bible
+GenericName=Bible Reader
+Comment=Terminal Bible (KJV) reader and search
+# TIP: adjust for your terminal, e.g. omarchy:
+#   Exec=xdg-terminal-exec --app-id=TUI.tile tbible
+Exec=xdg-terminal-exec tbible
+Terminal=false
+Type=Application
+Icon=tbible
+Categories=Utility;Office;Education;
+StartupNotify=true
