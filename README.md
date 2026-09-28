@@ -23,6 +23,27 @@ terminal. Built on [fzf](https://github.com/junegunn/fzf) and SQLite (FTS5).
 - `fzf` 0.60+
 - Python 3 (only needed to build the database from source)
 
+## Compatibility and dependencies
+
+Tested on **Arch Linux** and **macOS 27**. Other Linux and Unix-like systems should work if they meet the requirements above. Other macOS versions should also work.
+
+Install the dependencies with your platform's package manager:
+
+**Arch Linux**
+
+```sh
+sudo pacman -S bash sqlite fzf python
+```
+
+**macOS (Homebrew)**
+
+```sh
+brew install bash sqlite fzf python
+```
+
+Python is only needed when building or rebuilding the database. The commands
+above install it because the installer builds the database on first run.
+
 Optional:
 
 - `wl-clipboard` (`wl-copy`), `xclip`, or `xsel` — for copy-to-clipboard
