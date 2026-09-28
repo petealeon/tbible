@@ -31,8 +31,8 @@ Optional:
 ## Install
 
 ```sh
-git clone https://github.com/USER/terminal-bible.git
-cd terminal-bible
+git clone https://github.com/petealeon/tbible.git
+cd tbible
 ./install.sh             # installs tbible + builds the database
 ./install.sh --desktop   # also installs an app-menu entry + icon
 ```
