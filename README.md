@@ -3,7 +3,7 @@
 A fast, keyboard-driven KJV Bible browser and search tool that runs in your
 terminal. Built on [fzf](https://github.com/junegunn/fzf) and SQLite (FTS5).
 
-<!-- TODO: add a screenshot at docs/screenshot.png -->
+![tbible showing Bible search results and the reading preview](screenshots/screenshot-2026-09-28_22-37-49.png)
 
 ## Features
 
