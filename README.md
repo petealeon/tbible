@@ -20,7 +20,7 @@ terminal. Built on [fzf](https://github.com/junegunn/fzf) and SQLite (FTS5).
 
 - `bash` 4+
 - `sqlite3` (with FTS5 support — stock on virtually all distros)
-- `fzf` 0.4x+
+- `fzf` 0.60+
 - Python 3 (only needed to build the database from source)
 
 Optional:
@@ -58,10 +58,19 @@ search over the whole Bible.
 | `enter`                | open chapter → verse list     |
 | `enter` / `tab`        | copy verse                    |
 | `tab`                  | copy chapter                  |
-| `alt-s`                | global verse search           |
+| `alt-s`                | verse search across the Bible  |
 | `alt-p`                | toggle preview                |
 | `alt-j` / `alt-k`      | scroll preview                |
+| `alt-d` / `alt-u`      | scroll preview by half-page   |
+| `ctrl-j` / `ctrl-k`    | move through the result list  |
 | `esc`                  | back                          |
+
+In the main view, search guidance appears under the search box, centered search
+hints appear between the results and reading view, and centered reading
+controls appear on the preview's bottom border. Verse-selection and global
+verse-search views place result actions between the list and preview, with
+preview controls on the preview's bottom border. The reading preview includes
+the selected chapter and verse count.
 
 ### Examples
 
@@ -91,6 +100,14 @@ The database is generated with `scripts/build_db.py`:
 ```sh
 python3 scripts/build_db.py            # uses defaults
 python3 scripts/build_db.py --db /tmp/test.db
+```
+
+Searches are limited to verse text and omit explanatory KJV notes written in
+braces with a colon, so a note such as `{Joshua: called Jesus}` is not counted
+as a mention in the verse. Rebuild an existing database after updating:
+
+```sh
+python3 scripts/build_db.py
 ```
 
 ## Project layout

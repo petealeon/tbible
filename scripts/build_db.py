@@ -15,6 +15,7 @@ otherwise ~/.local/share/terminal-bible/bible.db.
 import argparse
 import json
 import os
+import re
 import sqlite3
 import sys
 
@@ -60,8 +61,14 @@ def main():
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
 
-    cur.execute("DROP VIEW IF EXISTS verses_fts")
-    cur.execute("DROP TABLE IF EXISTS verses_fts")
+    fts_object = cur.execute(
+        "SELECT type FROM sqlite_master WHERE name = 'verses_fts'"
+    ).fetchone()
+    if fts_object:
+        if fts_object[0] == "view":
+            cur.execute("DROP VIEW verses_fts")
+        elif fts_object[0] == "table":
+            cur.execute("DROP TABLE verses_fts")
     cur.execute("DROP TABLE IF EXISTS verses")
     cur.executescript(SCHEMA)
 
@@ -74,9 +81,10 @@ def main():
                     "INSERT INTO verses (book, chapter, verse, text) VALUES (?, ?, ?, ?)",
                     (name, chapter_no, verse_no, text),
                 )
+                searchable_text = re.sub(r"\{[^{}]*:[^{}]*\}", "", text)
                 cur.execute(
                     "INSERT INTO verses_fts (book, chapter, verse, text) VALUES (?, ?, ?, ?)",
-                    (name, chapter_no, verse_no, text),
+                    (name, chapter_no, verse_no, searchable_text),
                 )
                 total += 1
 

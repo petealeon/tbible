@@ -3,8 +3,6 @@
 # tbible - Terminal Bible (KJV)
 # A fast, keyboard-driven KJV Bible browser and search tool built on fzf.
 
-set -euo pipefail
-
 VERSION="1.0.0"
 DB_FILE="${DB_FILE:-$HOME/.local/share/terminal-bible/bible.db}"
 TRANSLATION="${TRANSLATION:-KJV}"
@@ -13,9 +11,15 @@ SCRIPT_PATH="$(readlink -f "$0")"
 # NT Books normalized list for OT/NT breakdown statistics
 NT_BOOKS="'matthew','mark','luke','john','acts','romans','1corinthians','2corinthians','galatians','ephesians','philippians','colossians','1thessalonians','2thessalonians','1timothy','2timothy','titus','philemon','hebrews','james','1peter','2peter','1john','2john','3john','jude','revelation'"
 
-# Help labels shown in the fzf headers
-HELP_MAIN="enter: open chapter | tab: copy chapter | alt-s: global search | alt-p: toggle preview | alt-j/k: scroll"
-HELP_VERSES="enter/tab: copy verse | esc: back | alt-p: toggle preview | alt-j/k: scroll"
+# Search guidance sits below the input; search help separates the results and
+# preview, with reading controls below the preview.
+HELP_SEARCH="Type a book/chapter, verse reference, or words to search"
+HELP_MAIN_RESULTS="↑/↓ move | Enter open | Alt-s verse search | Alt-p preview"
+HELP_READING="Alt-j/k scroll | Alt-u/d page | Tab copy chapter"
+HELP_VERSE_RESULTS="↑/↓ move | Enter/Tab copy verse | Esc back | Alt-p preview"
+HELP_VERSE_PREVIEW="Alt-j/k scroll | Alt-u/d page"
+HELP_GLOBAL_RESULTS="↑/↓ move | Enter/Tab copy verse | Esc back | Alt-p preview"
+HELP_GLOBAL_PREVIEW="Alt-j/k scroll | Alt-u/d page"
 
 usage() {
     cat <<EOF
@@ -32,8 +36,10 @@ Keybindings (interactive browser):
   type    a reference or search, e.g. "john 3", "john 3:16", or keywords
   enter   open chapter -> verse list (enter/tab copies verse)
   tab     copy chapter
-  alt-s   global verse search
-  alt-p   toggle preview | alt-j/alt-k scroll preview
+  ctrl-j/k or arrows  move through results
+  alt-s   verse search across the whole Bible
+  alt-j/k scroll preview | alt-u/d scroll by half-page
+  alt-p   toggle preview
   esc     back
 
 Environment:
@@ -83,7 +89,7 @@ build_fts_query() {
 # 3. Unified Search Engine (DRY Architecture for Chapters and Verses)
 search_engine() {
     local mode="$1"
-    local q="$2"
+    local q="${2:-}"
     q=$(echo "$q" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
     if [ -z "$q" ]; then
@@ -185,6 +191,7 @@ search_engine() {
     local fts_q
     fts_q=$(build_fts_query "$q")
     if [ -n "$fts_q" ]; then
+        local text_fts_q="text : ($fts_q)"
         local stats
         stats=$(sqlite3 "$DB_FILE" "
             SELECT
@@ -192,7 +199,7 @@ search_engine() {
                 COALESCE(SUM(CASE WHEN REPLACE(LOWER(book), ' ', '') IN ($NT_BOOKS) THEN 0 ELSE 1 END), 0),
                 COALESCE(SUM(CASE WHEN REPLACE(LOWER(book), ' ', '') IN ($NT_BOOKS) THEN 1 ELSE 0 END), 0)
             FROM verses_fts
-            WHERE verses_fts MATCH '$fts_q';
+            WHERE verses_fts MATCH '$text_fts_q';
         " 2>/dev/null)
 
         local total ot nt
@@ -216,15 +223,16 @@ search_engine() {
                     SELECT MAX(verse) FROM verses v WHERE v.book = f.book AND v.chapter = f.chapter
                 )
                 FROM verses_fts f
-                WHERE verses_fts MATCH '$fts_q'
+                WHERE verses_fts MATCH '$text_fts_q'
                 GROUP BY book, chapter
                 ORDER BY rank LIMIT 200;
             " 2>/dev/null
         else
             sqlite3 "$DB_FILE" "
-                SELECT book || ' ' || chapter || ':' || verse || ' | ' || text
-                FROM verses_fts
-                WHERE verses_fts MATCH '$fts_q'
+                SELECT v.book || ' ' || v.chapter || ':' || v.verse || ' | ' || v.text
+                FROM verses_fts f
+                JOIN verses v ON v.rowid = f.rowid
+                WHERE verses_fts MATCH '$text_fts_q'
                 ORDER BY rank LIMIT 200;
             " 2>/dev/null
         fi
@@ -233,10 +241,53 @@ search_engine() {
     fi
 }
 
+# Format verse text to the available preview width while keeping continuation
+# lines aligned with the verse text rather than the verse number.
+format_preview_verses() {
+    local raw_text="$1"
+    local query="${2:-}"
+    local safe_query=""
+    local preview_columns="${FZF_PREVIEW_COLUMNS:-80}"
+    [[ "$preview_columns" =~ ^[0-9]+$ ]] || preview_columns=80
+
+    if [ -n "$query" ] && [[ ! "$query" =~ [0-9]+ ]]; then
+        safe_query=$(echo "$query" | sed 's/[^^]/[&]/g; s/\^/\\^/g')
+    fi
+
+    printf '%s\n' "$raw_text" | awk -F'|' \
+        -v IGNORECASE=1 \
+        -v q="$safe_query" \
+        -v columns="$preview_columns" '
+        function highlight(value, output) {
+            output = value
+            if (q != "") gsub(q, "\033[1;35m&\033[0m", output)
+            return output
+        }
+        {
+            verse_num = $1
+            text = $2
+            sub(/^[[:space:]]+/, "", text)
+            text_width = columns - 4
+            if (text_width < 1) text_width = 1
+            word_count = split(text, words, /[[:space:]]+/)
+            line = ""
+            printf "\033[1;33m%3s\033[0m ", verse_num
+            for (i = 1; i <= word_count; i++) {
+                if (line != "" && length(line) + 1 + length(words[i]) > text_width) {
+                    printf "%s\n    ", highlight(line)
+                    line = words[i]
+                } else {
+                    line = line == "" ? words[i] : line " " words[i]
+                }
+            }
+            printf "%s\n\n", highlight(line)
+        }'
+}
+
 # 4. Universal Preview Renderer
 get_preview() {
-    local query="$1"
-    local selection="$2"
+    local query="${1:-}"
+    local selection="${2:-}"
     [ -z "$selection" ] && exit 0
 
     if [[ "$selection" == *"|"* ]]; then
@@ -255,8 +306,10 @@ get_preview() {
             text=$(sqlite3 "$DB_FILE" "SELECT text FROM verses WHERE REPLACE(LOWER(book), ' ', '') = '$norm_book' AND chapter = $ch AND verse = $v;" 2>/dev/null)
 
             if [ -n "$text" ]; then
+                local raw_text
+                raw_text=$(printf '%s|%s' "$v" "$text")
                 echo -e "\033[1;34m- $ref [$TRANSLATION]\033[0m\n"
-                printf "\033[1;33m%3s\033[0m %s\n\n" "$v" "$text"
+                format_preview_verses "$raw_text" "$query"
             fi
         fi
     else
@@ -272,24 +325,32 @@ get_preview() {
 
             [ -z "$raw_text" ] && exit 0
 
-            if [ -n "$query" ] && [[ ! "$query" =~ [0-9]+ ]]; then
-                local safe_query
-                safe_query=$(echo "$query" | sed 's/[^^]/[&]/g; s/\^/\\^/g')
-                echo "$raw_text" | awk -F'|' -v IGNORECASE=1 -v q="$safe_query" '
-                {
-                    verse_num = $1
-                    text = $2
-                    gsub(q, "\033[1;35m&\033[0m", text)
-                    printf "\033[1;33m%3s\033[0m %s\n\n", verse_num, text
-                }'
-            else
-                echo "$raw_text" | awk -F'|' '{printf "\033[1;33m%3s\033[0m %s\n\n", $1, $2}'
-            fi
+            local verse_count
+            verse_count=$(echo "$raw_text" | wc -l | xargs)
+            printf "\033[1;34m- %s (%s verses) [%s]\033[0m\n\n" \
+                "$selection" "$verse_count" "$TRANSLATION"
+            format_preview_verses "$raw_text" "$query"
         fi
     fi
 }
 
 # 5. Universal Smart Copy
+center_help() {
+    local text="$1"
+    local columns="${COLUMNS:-80}"
+    local terminal_size
+
+    terminal_size=$(stty size </dev/tty 2>/dev/null) || terminal_size=""
+    if [[ "$terminal_size" =~ ^[0-9]+[[:space:]]+([0-9]+)$ ]]; then
+        columns="${BASH_REMATCH[1]}"
+    fi
+    [[ "$columns" =~ ^[0-9]+$ ]] || columns=80
+
+    local padding=$(((columns - ${#text}) / 2))
+    [ "$padding" -ge 0 ] || padding=0
+    printf '%*s%s\n' "$padding" "" "$text"
+}
+
 copy_smart() {
     local selection="$1"
     [ -z "$selection" ] && exit 0
@@ -343,7 +404,7 @@ copy_smart() {
 # 6. Drilled-Down Verse Selection View
 select_verse_mode() {
     local selection="$1"
-    local initial_query="$2"
+    local initial_query="${2:-}"
     [ -z "$selection" ] && exit 0
 
     if [[ "$selection" =~ ^([1-3]?[[:space:]]*[A-Za-z]+[A-Za-z[[:space:]]]*)[[:space:]]+([0-9]+)$ ]]; then
@@ -354,7 +415,6 @@ select_verse_mode() {
 
         local count
         count=$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM verses WHERE REPLACE(LOWER(book), ' ', '') = '$norm_book' AND chapter = $ch;" 2>/dev/null)
-        local label_text="$selection | $count verses"
 
         {
             echo "Viewing: $selection ($count verses)"
@@ -365,13 +425,18 @@ select_verse_mode() {
             --header-lines=1 \
             --query="$initial_query" \
             --prompt="Select Verse > " \
-            --header="$HELP_VERSES" \
+            --input-border=rounded \
+            --input-label="$HELP_SEARCH" \
+            --input-label-pos=0:bottom \
+            --footer="$("$SCRIPT_PATH" --center-help "$HELP_VERSE_RESULTS")" \
+            --footer-border=none \
+            --bind "resize:transform-footer:$SCRIPT_PATH --center-help '$HELP_VERSE_RESULTS'" \
             --preview "$SCRIPT_PATH --get-preview '' {}" \
-            --preview-window 'down:50%:wrap:border-rounded' \
-            --preview-label="$label_text" \
-            --preview-label-pos='top' \
+            --preview-window 'down:11:noinfo:border-rounded' \
+            --preview-label="$HELP_VERSE_PREVIEW" \
+            --preview-label-pos=0:bottom \
             --bind 'alt-p:toggle-preview' \
-            --bind 'alt-k:preview-up,alt-j:preview-down' \
+            --bind 'ctrl-j:down,ctrl-k:up,alt-j:preview-down,alt-k:preview-up,alt-d:preview-half-page-down,alt-u:preview-half-page-up' \
             --bind "tab:execute-silent($SCRIPT_PATH --copy {})" \
             --bind "enter:execute-silent($SCRIPT_PATH --copy {})"
     fi
@@ -379,7 +444,7 @@ select_verse_mode() {
 
 # 7. Global Verse Search Overlay
 global_verse_search() {
-    local initial_query="$1"
+    local initial_query="${1:-}"
 
     search_engine "verses" "$initial_query" | fzf --ansi \
         --disabled \
@@ -389,13 +454,18 @@ global_verse_search() {
         --query="$initial_query" \
         --bind "change:reload:$SCRIPT_PATH --search-verses {q}" \
         --prompt="Global Verse Search > " \
-        --header="$HELP_VERSES" \
+        --input-border=rounded \
+        --input-label="$HELP_SEARCH" \
+        --input-label-pos=0:bottom \
+        --footer="$("$SCRIPT_PATH" --center-help "$HELP_GLOBAL_RESULTS")" \
+        --footer-border=none \
+        --bind "resize:transform-footer:$SCRIPT_PATH --center-help '$HELP_GLOBAL_RESULTS'" \
         --preview "$SCRIPT_PATH --get-preview {q} {}" \
-        --preview-window 'down:50%:wrap:border-rounded' \
-        --preview-label=' Verse Preview ' \
-        --preview-label-pos='top' \
+        --preview-window 'down:11:noinfo:border-rounded' \
+        --preview-label="$HELP_GLOBAL_PREVIEW" \
+        --preview-label-pos=0:bottom \
         --bind 'alt-p:toggle-preview' \
-        --bind 'alt-k:preview-up,alt-j:preview-down' \
+        --bind 'ctrl-j:down,ctrl-k:up,alt-j:preview-down,alt-k:preview-up,alt-d:preview-half-page-down,alt-u:preview-half-page-up' \
         --bind "tab:execute-silent($SCRIPT_PATH --copy {})" \
         --bind "enter:execute-silent($SCRIPT_PATH --copy {})"
 }
@@ -407,10 +477,10 @@ case "${1:-}" in
     --search-chapters) shift; search_engine "chapters" "$@" ; exit 0 ;;
     --search-verses) shift; search_engine "verses" "$@" ; exit 0 ;;
     --get-preview) shift; get_preview "$@" ; exit 0 ;;
+    --center-help) shift; center_help "$@" ; exit 0 ;;
     --copy) shift; copy_smart "$@" ; exit 0 ;;
     --select-verse-mode) shift; select_verse_mode "$@" ; exit 0 ;;
     --global-verse-search) shift; global_verse_search "$@" ; exit 0 ;;
-    "") usage ; exit 0 ;;
 esac
 
 # Main Execution Loop
@@ -422,14 +492,19 @@ search_engine "chapters" "" | fzf \
     --delimiter='\t' \
     --with-nth=1 \
     --header-lines=1 \
-    --header="$HELP_MAIN" \
     --bind "change:reload:$SCRIPT_PATH --search-chapters {q}" \
     --preview "$SCRIPT_PATH --get-preview {q} {1}" \
-    --preview-window 'down:65%:wrap:border-rounded' \
-    --preview-label=' {1} ({2} verses) ' \
-    --preview-label-pos='top' \
+    --preview-window 'down:62%:noinfo:border-rounded' \
+    --preview-label="$HELP_READING" \
+    --preview-label-pos=0:bottom \
+    --footer="$("$SCRIPT_PATH" --center-help "$HELP_MAIN_RESULTS")" \
+    --footer-border=none \
+    --bind "resize:transform-footer:$SCRIPT_PATH --center-help '$HELP_MAIN_RESULTS'" \
+    --input-border=rounded \
+    --input-label="$HELP_SEARCH" \
+    --input-label-pos=0:bottom \
     --bind 'alt-p:toggle-preview' \
-    --bind 'alt-k:preview-up,alt-j:preview-down' \
+    --bind 'ctrl-j:down,ctrl-k:up,alt-j:preview-down,alt-k:preview-up,alt-d:preview-half-page-down,alt-u:preview-half-page-up' \
     --bind "tab:execute-silent($SCRIPT_PATH --copy {1})" \
     --bind "enter:execute($SCRIPT_PATH --select-verse-mode {1} {q})" \
     --bind "alt-s:execute($SCRIPT_PATH --global-verse-search {q})" \
