@@ -21,6 +21,18 @@ HELP_VERSE_PREVIEW="Alt-j/k scroll | Alt-u/d page"
 HELP_GLOBAL_RESULTS="↑/↓ move | Enter/Tab copy verse | Esc back | Alt-p preview"
 HELP_GLOBAL_PREVIEW="Alt-j/k scroll | Alt-u/d page"
 
+# Results rows pad "Book Chapter" out to a fixed width so the heat strip starts
+# in the same column on every row. That padding reaches the {1} placeholder, so
+# every consumer that acts on a selection trims it before parsing.
+LABEL_COLUMNS=20
+
+trim_ws() {
+    local s="$1"
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+    printf '%s' "$s"
+}
+
 usage() {
     cat <<EOF
 tbible $VERSION - Terminal Bible (KJV)
@@ -305,6 +317,7 @@ search_engine() {
             # costs ~4s instead of ~120ms).
             # Field 3 is a hidden preview scroll offset: verse number + 2 header
             # lines, clamped to 0 when the match sits in the first 3 verses.
+            # Field 4 is the per-book heat strip (hidden, shown via --with-nth).
             sqlite3 "$DB_FILE" "
                 WITH ch AS (
                     SELECT book, chapter, MAX(verse) AS mv
@@ -330,7 +343,7 @@ search_engine() {
                 FROM m
                 JOIN ch ON ch.book = m.book AND ch.chapter = m.chapter
                 LEFT JOIN best ON best.book = m.book AND best.chapter = m.chapter AND best.rn = 1;
-            " 2>/dev/null
+            " 2>/dev/null | attach_heat_strip "$(heat_strip_data "$q")"
         else
             sqlite3 "$DB_FILE" "
                 SELECT v.book || ' ' || v.chapter || ':' || v.verse || ' | ' || v.text
@@ -343,6 +356,107 @@ search_engine() {
     else
         echo "No matches found"
     fi
+}
+
+# Per-book match density for the current query, rendered as a fixed-width strip
+# of 66 cells in canonical Genesis -> Revelation order (one cell per book, so
+# the strip's shape is comparable across queries). A dim divider sits at the
+# Matthew position to mark the OT/NT boundary.
+#
+# Shading is log-scaled against the busiest book *in this query*: max matches
+# per book ranges roughly 245 ("jesus") to 700 ("lord"), so a fixed scale would
+# saturate one term and wash out another.
+#
+# Emits one flat tab line: the max, then each book name and its count in
+# canonical order. Books with no hits are kept so every strip stays 66 cells
+# wide and stays positionally comparable between queries.
+heat_strip_data() {
+    local fts_q
+    fts_q=$(build_fts_query "$1")
+    [ -z "$fts_q" ] && return
+
+    sqlite3 "$DB_FILE" "
+        WITH counts AS (
+            SELECT book, COUNT(*) AS n
+            FROM verses_fts
+            WHERE verses_fts MATCH 'text : ($fts_q)'
+            GROUP BY book
+        ),
+        ordered AS (
+            SELECT b.book AS book, COALESCE(counts.n, 0) AS n
+            FROM (SELECT book, MIN(rowid) AS first_row FROM verses GROUP BY book) b
+            LEFT JOIN counts ON counts.book = b.book
+            ORDER BY b.first_row
+        )
+        SELECT (SELECT MAX(n) FROM ordered)
+               || char(9) || group_concat(book || char(9) || n, char(9))
+        FROM ordered;
+    " 2>/dev/null
+}
+
+# Append the heat strip as field 4 of every chapters-mode row. Field 1 is padded
+# to a fixed width so the strip begins in the same column on every row: fzf
+# renders only fields 1 and 4 (via --with-nth=1,4) joined by one delimiter, so a
+# constant-width field 1 puts the strip at a constant tab stop regardless of how
+# long the book and chapter names are.
+#
+# The row's own book is drawn in magenta, so each line shows where that chapter
+# sits on the map as well as how the whole Bible is distributed.
+#
+# heat_strip_data output is a flat tab list: max, then (book, n) pairs in
+# canonical order. Book names contain spaces but never tabs, so tab splitting
+# is safe even for "1 Samuel" and "Song of Solomon".
+attach_heat_strip() {
+    local data="${1:-}"
+    [ -z "$data" ] && { cat; return; }
+
+    awk -F'\t' -v OFS='\t' -v data="$data" -v width="$LABEL_COLUMNS" '
+        BEGIN {
+            n = split(data, f, "\t")
+            max = f[1] + 0
+            nb = (n - 1) / 2
+            for (i = 1; i <= nb; i++) {
+                idx[f[i * 2]]     = i
+                hits[f[i * 2]]    = f[i * 2 + 1] + 0
+            }
+            ramp  = " ░▒▓█"
+            DIM   = "\033[2;37m"
+            RESET = "\033[0m"
+            MARK  = "\033[1;95m"
+            DIV   = "│"
+            # Matthew is book 40, so the divider goes just before it.
+            SPLIT = 40
+        }
+        {
+            if (nb == 0 || max <= 0) { print; next }
+
+            # Field 1 is "Book Chapter"; drop the trailing number to recover the
+            # book name so multi-word names resolve correctly.
+            book = $1
+            sub(/[[:space:]]+[0-9]+$/, "", book)
+            cur = idx[book]
+
+            strip = ""
+            for (i = 1; i <= nb; i++) {
+                if (i == SPLIT) strip = strip DIM DIV RESET
+                v = hits[f[i * 2]]
+                lvl = 0
+                if (v > 0) {
+                    d = log(v + 1) / log(max + 1)
+                    if (d > 1) d = 1
+                    lvl = 1 + int(d * 3.999)
+                }
+                cell = substr(ramp, lvl + 1, 1)
+                if (i == cur) strip = strip MARK cell RESET
+                else           strip = strip cell
+            }
+
+            label = $1
+            pad = width - length(label)
+            if (pad > 0) label = label sprintf("%*s", pad, "")
+
+            print label, $2, $3, strip
+        }'
 }
 
 # Render one logical line per verse. Visual word wrap is left to fzf's
@@ -395,6 +509,7 @@ format_preview_verses() {
 get_preview() {
     local query="${1:-}"
     local selection="${2:-}"
+    selection=$(trim_ws "$selection")
     [ -z "$selection" ] && exit 0
 
     if [[ "$selection" == *"|"* ]]; then
@@ -475,6 +590,7 @@ center_help() {
 
 copy_smart() {
     local selection="$1"
+    selection=$(trim_ws "$selection")
     [ -z "$selection" ] && exit 0
 
     if [[ "$selection" == *"|"* ]]; then
@@ -527,6 +643,7 @@ copy_smart() {
 select_verse_mode() {
     local selection="$1"
     local initial_query="${2:-}"
+    selection=$(trim_ws "$selection")
     [ -z "$selection" ] && exit 0
 
     if [[ "$selection" =~ ^([1-3]?[[:space:]]*[A-Za-z]+[A-Za-z[[:space:]]]*)[[:space:]]+([0-9]+)$ ]]; then
@@ -615,13 +732,17 @@ esac
 #   +{3}+2     field 3 is a logical-line offset (verse number + 2 header lines,
 #              already reduced by 2 in SQL); the trailing +2 compensates for
 #              the pinned header, so verse N lands with 3 verses of lead-in.
+#   with-nth=1,4
+#              shows "Book Chapter" plus the per-book heat strip in column 4.
+#              {1} and {3} still resolve against the original fields, so
+#              preview, copy, and the scroll offset are unaffected.
 search_engine "chapters" "" | fzf \
     --ansi \
     --disabled \
     --layout=reverse \
     --info=hidden \
     --delimiter='\t' \
-    --with-nth=1 \
+    --with-nth=1,4 \
     --header-lines=1 \
     --bind "change:reload:$SCRIPT_PATH --search-chapters {q}" \
     --preview "$SCRIPT_PATH --get-preview {q} {1}" \
