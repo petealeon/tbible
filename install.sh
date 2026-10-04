@@ -25,9 +25,12 @@ mkdir -p "$BIN_DIR"
 install -m 0755 "$SCRIPT_DIR/tbible" "$BIN_DIR/tbible"
 echo "installed: $BIN_DIR/tbible"
 
-# 2. Database (only build if missing)
+# 2. Database (build if missing, or if built from an older schema)
 if [ ! -f "$DB_PATH" ]; then
     echo "building database (kjv -> $DB_PATH) ..."
+    python3 "$SCRIPT_DIR/scripts/build_db.py" --db "$DB_PATH"
+elif ! sqlite3 "$DB_PATH" "SELECT book_key FROM verses LIMIT 1;" >/dev/null 2>&1; then
+    echo "database schema is outdated (missing verses.book_key), rebuilding ..."
     python3 "$SCRIPT_DIR/scripts/build_db.py" --db "$DB_PATH"
 else
     echo "database already exists: $DB_PATH (delete to rebuild)"

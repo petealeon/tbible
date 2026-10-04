@@ -5,6 +5,10 @@ Reproducible builder: reads data/kjv.json (UTF-8 BOM tolerant) and produces a
 SQLite database with a `verses` table plus an FTS5 virtual table, matching the
 schema expected by `tbible`.
 
+`verses` carries a normalised `book_key` column and indexes on
+`(book, chapter, verse)` and `(book_key, chapter, verse)`, so reference lookups
+and per-chapter aggregates resolve by index seek instead of table scan.
+
 Usage:
     build_db.py [--json data/kjv.json] [--db /path/to/bible.db]
 
@@ -21,13 +25,25 @@ import sys
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS verses (
-    book    TEXT,
-    chapter INTEGER,
-    verse   INTEGER,
-    text    TEXT
+    book     TEXT,
+    book_key TEXT,
+    chapter  INTEGER,
+    verse    INTEGER,
+    text     TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_verses_bcv ON verses(book, chapter, verse);
+CREATE INDEX IF NOT EXISTS idx_verses_bkc ON verses(book_key, chapter, verse);
 CREATE VIRTUAL TABLE IF NOT EXISTS verses_fts USING fts5(book, chapter, verse, text);
 """
+
+
+def book_key(name):
+    """Normalised lookup key for a book name.
+
+    Matches the shell-side `tr -d ' ' | tr '[:upper:]' '[:lower:]'` so book
+    references stay sargable and can use idx_verses_bkc.
+    """
+    return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
 def default_db_path():
@@ -75,11 +91,13 @@ def main():
     total = 0
     for book in books:
         name = book["name"]
+        key = book_key(name)
         for chapter_no, verses in enumerate(book["chapters"], start=1):
             for verse_no, text in enumerate(verses, start=1):
                 cur.execute(
-                    "INSERT INTO verses (book, chapter, verse, text) VALUES (?, ?, ?, ?)",
-                    (name, chapter_no, verse_no, text),
+                    "INSERT INTO verses (book, book_key, chapter, verse, text)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (name, key, chapter_no, verse_no, text),
                 )
                 searchable_text = re.sub(r"\{[^{}]*:[^{}]*\}", "", text)
                 cur.execute(
@@ -89,7 +107,9 @@ def main():
                 total += 1
 
     conn.commit()
-    conn.execute("PRAGMA optimize")
+    # Real statistics (not just optimize) so the planner picks the covering
+    # index for the per-chapter aggregate instead of scanning `verses`.
+    conn.execute("ANALYZE")
     conn.commit()
     conn.close()
 
