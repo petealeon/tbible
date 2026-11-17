@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Name=tbible
+GenericName=Bible Reader
+Comment=Terminal Bible (KJV) reader and search
+Exec=tbible
+Terminal=true
+Type=Application
+Categories=Utility;Office;Education;
+StartupNotify=true
