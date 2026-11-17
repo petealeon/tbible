@@ -2,106 +2,183 @@
 
 ![tbible v2 search and reader views](screenshots/tbible-v2.png)
 
-A fast, keyboard-driven King James Bible for the terminal. The complete KJV
-text and a prebuilt full-text search index are compiled into one static binary,
-so there is no database to build, no service to run, and no network dependency.
+`tbible` is a keyboard-driven King James Bible for your terminal. Search a
+word, jump straight to a passage, read it with proper typography and notes, and
+keep your own bookmarks and notes. The whole Bible and its search index are
+built into one executable, so there is nothing to install separately and no
+database to build.
 
-v2 is the current release. It is a rewrite of the original bash/fzf/SQLite
-app in Go with Bubble Tea. Windows 11 + Windows Terminal are the primary
-target; Linux and macOS are fully supported. The legacy v1 application is
-preserved in [`legacy/v1/`](legacy/v1/README.md) and on the `v1` branch.
+v2 is the current release. Windows 11 with Windows Terminal is the primary
+target; Linux and macOS are fully supported. The original bash/fzf application
+is still available as [legacy v1](legacy/v1/README.md) on the `v1` branch.
 
-## What's new in v2
+## Features
 
-- **One static executable.** Corpus, search index, styles, headings, and KJV
-  marginal notes are embedded with `go:embed`. v1 needed bash, fzf, sqlite3,
-  Python, and a generated database.
-- **Much faster.** Cold start plus the first search is roughly 20 ms; repeated
-  searches take tens of microseconds. v1 paid shell and SQLite FTS overhead on
-  every invocation.
-- **Lower memory at rest.** Borrowed embedded views, compact varint postings,
-  and eager validation keep the full corpus resident without high long-running
-  RSS. The TUI defaults to `GOGC=50`, overridable through `GOGC`.
-- **Verified, corrected text.** 66 books, 1,189 chapters, and 31,102 verses
-  from eBible.org's `eng-kjv2006` USFM edition. The generator checks canonical
-  counts and known verses that the old corpus had dropped or shifted.
-- **One omnibox.** References, ranges, phrases, prefixes, exclusions, and
-  keywords share a single input. There are no hidden search modes to learn.
-- **Richer reading.** Verse numbers, paragraphs, poetry, section headings,
-  psalm titles, supplied-word italics, red-letter text, KJV marginal notes,
-  and your own notes inline with a distinct `✎` marker.
-- **Result heatmap.** See keyword concentration across all 66 books, drill into
-  chapters, and toggle density vs raw counts. Wide terminals also show a live
-  compact heatmap beside the verse preview.
-- **Calendar view.** Browse notes, bookmarks, and reading history by local
-  date in a Sunday-first heatmap with per-day entries and inline filtering.
-- **Persistent local user data.** Bookmarks, notes, reading history, and
-  scoped saved searches live in one versioned JSON file. Corrupt or
-  future-version files are backed up rather than silently overwritten.
-- **Scriptable CLI.** `--read`, `--search`, `--plain`, `--limit`, `--scope`,
-  `--book`, and `--json` make the same binary usable from scripts.
-- **Cross-platform binaries.** Linux, macOS, and Windows builds are static and
-  need no C compiler at runtime or build time.
+- **Fast.** Cold start plus the first search is roughly 20 ms, and repeated
+  searches take tens of microseconds. Search stays instant even on a large
+  terminal window.
+- **Complete, verified KJV text.** All 66 books, 1,189 chapters, and 31,102
+  verses, with the text checked against the canonical eBible.org `eng-kjv2006`
+  edition.
+- **One search box.** Type a reference, a range, a phrase, a prefix, or a word
+  with exclusions. No modes to switch and no separate reference lookup.
 
-## Quick start
+  ```text
+  John 3:16          a single verse
+  1 Cor 13:4-7       a verse range
+  John 3-5           a chapter range
+  John 3:16-5:2      a range across chapters
+  "still waters"     an exact phrase
+  love -world        include love, exclude world
+  shep*              words beginning with "shep"
+  john 3:16; rom 5:8 several references at once
+  ```
 
-### Install a prebuilt binary (recommended)
+- **A readable Bible view.** Verse numbers, paragraphs, poetry, section
+  headings, psalm titles, red-letter text, supplied-word italics, KJV marginal
+  notes, and your own notes inline with a distinct `✎` marker.
+- **Result heatmap.** See where your search terms cluster across all 66 books,
+  open a book to see its chapters, and switch between intensity and raw counts.
+  On wide terminals, a live mini heatmap follows the selected result.
 
-Prebuilt archives are published as assets on the `v2.0.0` GitHub Release. The
-installers verify the download against the published SHA-256 manifest.
+  ![tbible v2 result heatmap showing match concentration by book](screenshots/tbible-v2-heatmap.png)
 
-Linux and macOS:
+- **Calendar view.** Browse notes, bookmarks, and reading history by date in a
+  Sunday-first heatmap. Colours show the dominant source for each day, and you
+  can filter the entries shown for that day.
+- **Your own library.** Save bookmarks, write notes, revisit reading history,
+  and keep named searches. Your data is stored locally as one JSON file; if it
+  becomes unreadable, the original is backed up rather than overwritten.
+- **Keyboard-only.** Every action has a key. Press `?` in the app for the full
+  list.
+- **Copy and script.** Copy a verse or a whole range with one key, or use the
+  same executable from a script:
+
+  ```sh
+  tbible --read "John 3:16"
+  tbible --search shepherd
+  tbible --search "John 3:16; Romans 5:8" --json
+  ```
+
+## What's new compared with v1
+
+- **No setup.** v1 needed bash, fzf, sqlite3, Python, and a generated database.
+  v2 is a single executable with the text and index already inside it.
+- **Much faster.** v1 paid shell and database startup costs on every run. v2
+  opens and searches in milliseconds.
+- **Better search.** Results are ranked by relevance, and phrases, prefixes,
+  exclusions, scopes, and multi-reference ranges all live in the same box.
+- **A real reading view.** v1 showed plain search results and previews. v2 adds
+  typography, headings, poetry, red-letter text, and both KJV and personal
+  notes inline.
+- **A personal library.** v1 did not save bookmarks, notes, or history. v2 does,
+  and adds a calendar so you can see your activity by date.
+- **Corrected text.** The source used by v1 had 31,100 verses and had dropped or
+  shifted a few well-known readings. v2 ships a checked 31,102-verse text.
+- **Better Windows support.** v2 has a native Windows executable and works best
+  in Windows Terminal; there is no fzf, SQLite, or Python dependency.
+
+The v1 application is still supported for people who prefer its workflow. New
+features go into v2.
+
+## Install
+
+Prebuilt binaries are attached to the v2.0.0 release. The installers download
+the right archive for your system and verify it against the published SHA-256
+checksums. If you prefer to build from source, the instructions are below.
+
+### Linux
+
+**Install the released binary (recommended):**
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/petealeon/tbible/main/install.sh | bash
 ```
 
-With options:
+The binary is installed to `~/.local/bin/tbible` by default. Add that directory
+to your `PATH` if it is not already there. To choose another location:
 
 ```sh
 curl -fsSL -o install.sh \
   https://raw.githubusercontent.com/petealeon/tbible/main/install.sh
 chmod +x install.sh
-./install.sh --version 2.0.0 --bin-dir "$HOME/.local/bin" --desktop
+./install.sh --bin-dir "$HOME/bin" --desktop
 ```
 
-Windows PowerShell:
+The `--desktop` flag also installs a Linux desktop entry.
 
-```powershell
-powershell -ExecutionPolicy Bypass -Command ^
-  "irm https://raw.githubusercontent.com/petealeon/tbible/main/scripts/install.ps1 | iex"
-```
+**Build from source on Linux:**
 
-Or from a checkout:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
-```
-
-Use `-AddToPath` to add the install directory to your user `PATH`. Both
-installers accept a mirror override: `TBIBLE_RELEASE_BASE` for `install.sh` and
-`-BaseUri` for `install.ps1`.
-
-> Until the `v2.0.0` release assets are uploaded, use the source-build path
-> below. Release archives are produced locally by `make dist`.
-
-### Build from source
-
-Requires Go 1.27 or newer (the version pinned in `go.mod`). No C compiler is
-needed; release builds set `CGO_ENABLED=0`.
-
-From a checkout:
+Requirements: Go 1.27 or newer, `git`, and optionally `make`. For clipboard
+copying, install `wl-copy`, `xclip`, or `xsel`.
 
 ```sh
 git clone https://github.com/petealeon/tbible.git
 cd tbible
-
-./install.sh --source          # build and install to ~/.local/bin
-make build                     # or just build ./bin/tbible
-./bin/tbible --version
+./install.sh --source
+tbible --version
 ```
 
-On Windows:
+### macOS
+
+**Install the released binary (recommended):**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/petealeon/tbible/main/install.sh | bash
+```
+
+The binary is installed to `~/.local/bin/tbible` by default. If macOS blocks
+the first launch, run:
+
+```sh
+xattr -d com.apple.quarantine ~/.local/bin/tbible
+```
+
+You can also build from source, which avoids Gatekeeper entirely.
+
+**Build from source on macOS:**
+
+Requirements: Go 1.27 or newer (`brew install go` works), `git` from the Xcode
+Command Line Tools, and optionally `make`. `pbcopy` for clipboard copying is
+built in.
+
+```sh
+git clone https://github.com/petealeon/tbible.git
+cd tbible
+./install.sh --source
+tbible --version
+```
+
+### Windows
+
+Windows 11 with Windows Terminal is recommended. Older Windows versions may
+work, but Windows Terminal gives the best layout and colour support.
+
+**Install the released binary (recommended):**
+
+Open PowerShell and run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/petealeon/tbible/main/scripts/install.ps1 | iex"
+```
+
+The binary is installed to `%LOCALAPPDATA%\Programs\tbible\tbible.exe`. To add
+that folder to your user `PATH`, download the installer first and run it with
+`-AddToPath`:
+
+```powershell
+irm https://raw.githubusercontent.com/petealeon/tbible/main/scripts/install.ps1 -OutFile install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -AddToPath
+```
+
+If SmartScreen warns about an unsigned first release, verify the published
+checksum, then choose **More info → Run anyway**.
+
+**Build from source on Windows:**
+
+Requirements: Go 1.27 or newer from <https://go.dev/dl/>, PowerShell 5.1 or
+newer, and Git for Windows for the commands below. `clip.exe` for clipboard
+copying is built in.
 
 ```powershell
 git clone https://github.com/petealeon/tbible.git
@@ -110,213 +187,67 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Source
 .\bin\tbible.exe --version
 ```
 
-The generated data files under `internal/embedded/data/` are committed, so a
-normal build needs no network access and no generation step.
+To install a prebuilt binary from a local checkout instead:
 
-## Dependencies
-
-| Platform | To run | To build from source | Clipboard `y` |
-| --- | --- | --- | --- |
-| Linux | UTF-8 terminal (Windows Terminal, Alacritty, kitty, etc.) | Go 1.27+, `git`, optional `make`/`bash` | `wl-copy`, `xclip`, or `xsel` |
-| macOS | Terminal.app, iTerm2, or Windows Terminal | Go 1.27+, `git`; Xcode Command Line Tools supply `git`/`make` | `pbcopy` (built in) |
-| Windows | Windows 11 + Windows Terminal recommended | Go 1.27+ and PowerShell 5.1+; Git for Windows optional | `clip.exe` (built in) |
-
-Go can be installed from <https://go.dev/dl/>. On macOS, `brew install go` is
-also fine. Python 3 is only needed for `make dist` and the legacy v1 database
-builder, not for normal use or building.
-
-Notes:
-
-- Clipboard helpers are optional. Copy failures are shown in the status line;
-  reading, searching, and navigation work without them.
-- macOS may quarantine downloaded binaries. If macOS blocks first launch, run
-  `xattr -d com.apple.quarantine /path/to/tbible`, or build from source.
-- Windows SmartScreen may warn on an unsigned first release. Check the
-  published checksum, then choose **More info → Run anyway**.
-
-### Should releases include binary downloads?
-
-Yes. The whole design is a single static executable: shipping prebuilt binaries
-is the lowest-friction path for users and avoids making them install Go just to
-read the Bible. Keep source builds available for developers and for platforms
-without a published archive. Always publish a checksum manifest so the
-installers and cautious users can verify downloads.
-
-`make dist` builds and packages:
-
-```text
-tbible-2.0.0-linux-amd64.tar.gz
-tbible-2.0.0-linux-arm64.tar.gz
-tbible-2.0.0-darwin-amd64.tar.gz
-tbible-2.0.0-darwin-arm64.tar.gz
-tbible-2.0.0-windows-amd64.zip
-tbible-2.0.0-checksums.txt
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
 
-## Verification
+## A quick tour
 
-```sh
-gofmt -l .
-make test
-make vet
-make race
-go run ./cmd/tbgen --verify
-make build windows
-./bin/tbible --version
-```
-
-Tests cover reference/range parsing, corpus validation and corruption,
-tokenization and query matching, index round-trips, state recovery, scoped
-saved searches, CLI helpers, date aggregation, and the TUI flows. Fuzz targets
-guard the binary readers and query parser against malformed input.
-
-## Using the TUI
-
-Run `tbible` with no arguments. The omnibox is focused at launch.
-
-```text
-John 3:16          single reference
-shepherd           keyword, ranked by BM25
-"still waters"     exact phrase
-love -world        require love, exclude world
-shep*              prefix
-1 Cor 13:4-7       chapter/verse range
-John 3-5           chapter range
-John 3:16-5:2      cross-chapter range
-john 3:16; rom 5:8 several references
-3:16               relative to the current book
-```
-
-The visible scope chip cycles with `f`: all books, Old Testament, New
-Testament, or the current book. `Ctrl-S` saves the query and its scope. Press
-`H` for the full result heatmap; in terminals at least 120×30 a compact live
-heatmap also sits below the selected verse preview.
-
-![tbible v2 result heatmap showing match concentration by book](screenshots/tbible-v2-heatmap.png)
-
-The Library (`L`) holds bookmarks, notes, history, saved searches, and the
-Calendar tab. In Calendar, `h`/`l` move by day, `[`/`]` by month, `1`–`4` or
-`s` switch source, `f` filters entries, and `Enter` opens the selected verse.
-Press `?` at any time for the complete key list.
-
-Common keys:
+Run `tbible` with no arguments. The search box is focused at launch. Type a
+reference or a query, move with the arrow keys, and press `Enter` to open what
+you selected.
 
 | Key | Action |
 | --- | --- |
-| `/` | Focus the omnibox |
-| `↑` `↓` | Move selection |
-| `Enter` | Open the selected reference or verse |
-| `Tab` | Next result section / Calendar focus |
-| `f` | Cycle scope, or open Calendar filter |
-| `H` | Result heatmap |
-| `L` | Library |
-| `Ctrl-P` or `:` | Command palette |
-| `y`, `b`, `n` | Copy, bookmark, or note the focused verse/range |
-| `i` | Toggle KJV marginal notes and your inline notes |
-| `Esc` | Clear query, leave reader, or go back |
+| `/` | Focus the search box |
+| `↑` `↓` | Move through results or verses |
+| `Enter` | Open the selected result |
+| `f` | Change search scope, or filter Calendar entries |
+| `H` | Open the full result heatmap |
+| `L` | Open the Library |
+| `Ctrl-P` | Command palette |
+| `y`, `b`, `n` | Copy, bookmark, or add a note |
+| `i` | Show or hide KJV and personal notes |
+| `?` | Help |
 | `Ctrl-C` | Quit |
 
-## Command line
+In the Library, use `Tab` to switch between All, Bookmarks, Notes, History,
+Saved searches, and Calendar. In Calendar, use `h`/`l` to move by day, `[`/`]`
+to move by month, `1`–`4` to choose a source, and `Enter` to open an entry.
 
-```sh
-tbible --read "John 3:16"
-tbible --read "Psalms 23" --plain
-tbible --read "John 3:16-5:2" --json
-tbible --search "John 3:16; Romans 5:8" --json
-tbible --search shepherd --limit 10
-tbible --search faith --scope nt
-tbible --search grace --book Romans
-tbible shepherd                       # shorthand for --search
-tbible --version
-```
+## Your data
 
-`--read` prints every referenced verse, deduplicating overlaps and splitting
-cross-chapter ranges at chapter boundaries. `--plain` removes headings and
-verse numbers; `--json` emits structured output for both read and search.
-
-## User data
-
-State is stored at:
+Your notes, bookmarks, history, and saved searches are stored locally:
 
 - Windows: `%AppData%\tbible\state.json`
 - macOS: `~/Library/Application Support/tbible/state.json`
-- Linux: `$XDG_CONFIG_HOME/tbible/state.json` or
-  `~/.config/tbible/state.json`
+- Linux: `~/.config/tbible/state.json`
 
-Set `TBIBLE_STATE_DIR` to override the directory. Writes are versioned,
-atomic, and debounced; history is capped at the newest 100 entries. If a file
-is unreadable or from a future version, it is renamed to `state.json.corrupt`
-(or `.corrupt.1`, `.corrupt.2`, …) and the app starts with a visible warning.
+Set `TBIBLE_STATE_DIR` if you want to store the file somewhere else, such as on
+portable media. If the file is damaged or comes from a newer version, it is
+renamed with a `.corrupt` suffix and the app starts with a warning.
 
-v1 did not persist user notes, bookmarks, or history, so there is no state to
-migrate. Existing v1 users can keep using the legacy app or start fresh in v2.
-
-## Data provenance
-
-The corpus is generated deterministically from eBible.org's `eng-kjv2006` USFM
-edition, vendored at `data/eng-kjv2006_usfm.zip`:
-
-```text
-SHA-256 b6faa67117ccaba49df9e7df224a553f11758ae7c5d58f0f7979e2b73ac4480b
-```
-
-| Generated file | Purpose |
-| --- | --- |
-| `internal/embedded/data/kjv.tbc` | binary corpus with text, styles, notes, headings |
-| `internal/embedded/data/kjv.tbi` | BM25 inverted index |
-| `legacy/v1/data/kjv.json` | clean JSON source for the legacy v1 database builder |
-
-Regenerate or verify with:
-
-```sh
-go run ./cmd/tbgen --verify   # validate only
-go run ./cmd/tbgen            # rewrite corpus, index, and legacy JSON
-```
-
-Binary formats are versioned (`TBC2`, `TBI2`) and reject unknown versions.
-
-## Repository layout
-
-```text
-cmd/tbible              CLI and TUI entry point
-cmd/tbgen               deterministic corpus/index/JSON generator
-internal/activity       date grouping for the calendar
-internal/corpus         Bible model and binary corpus format
-internal/usfm           USFM parser
-internal/search         tokenizer, BM25 index, query parser, scopes
-internal/ref            reference parser and book aliases
-internal/store          versioned JSON user state
-internal/tui            Bubble Tea screens and rendering
-internal/embedded       the only place generated data is wired in
-data/                   vendored USFM source
-legacy/v1/              preserved bash/fzf/SQLite application
-install.sh              Linux/macOS installer
-scripts/install.ps1     Windows installer
-scripts/dist.sh         release archive builder
-packaging/              desktop entry
-```
-
-v2 ships the KJV core only. The embedded-data seam is deliberately narrow so
-optional packs (commentaries, dictionaries, additional translations) can be
-added later without changing the reader, store, or query syntax.
+v1 did not save user notes, bookmarks, or history, so there is nothing to
+migrate. You can keep using v1 or start fresh in v2.
 
 ## Legacy v1
 
-The original bash/fzf/SQLite app is still available and supported:
+The original application is preserved in [`legacy/v1/`](legacy/v1/README.md) and
+on the `v1` branch. It uses bash, fzf, sqlite3, and Python. It remains available
+and supported, but new features are developed for v2.
 
-- source: [`legacy/v1/`](legacy/v1/README.md)
-- branch: `v1`
-- installer: `legacy/v1/install.sh`
-
-It needs bash 4+, fzf 0.60+, sqlite3 with FTS5, and Python 3 to build its
-database. New development happens in v2.
-
-## License and textual notice
+## License and KJV notice
 
 This project is licensed under the terms in [LICENSE](LICENSE).
 
-The King James Version is in the public domain in the United States and most
-of the world outside the United Kingdom. In the UK the Authorized Version is
-subject to Crown copyright; this project does not grant any rights to the KJV
-text and is not affiliated with the Crown. The text used here is eBible.org's
-`eng-kjv2006` edition, which states that it is public domain outside the UK.
+The King James Version is in the public domain in the United States and most of
+the world outside the United Kingdom. In the United Kingdom the Authorized
+Version is subject to Crown copyright; this project does not grant any rights
+to the KJV text and is not affiliated with the Crown.
+
+The text used here is eBible.org's `eng-kjv2006` edition, which states that it
+is public domain outside the UK. The eBible source includes Strong's numbers
+and footnotes; v2 keeps the KJV marginal notes but does not display Strong's
+numbers.
