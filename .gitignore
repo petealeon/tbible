@@ -15,6 +15,12 @@ __pycache__/
 # Release archives
 *.tar.gz
 
-# General
+# Editor and OS files
 .DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Backups
 tbible.backup.*
