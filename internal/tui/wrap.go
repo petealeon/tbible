@@ -115,8 +115,9 @@ func covered(spans []corpus.Span, at int) bool {
 	return false
 }
 
-// renderVerseRange renders text[a:b] with italic and red-letter styling.
-func renderVerseRange(text string, a, b int, italics, red []corpus.Span) string {
+// renderVerseRange renders text[a:b] with italic and red-letter styling. When
+// showStrongs is set, each tagged word gets a compact superscript number.
+func renderVerseRange(text string, a, b int, italics, red []corpus.Span, strongs []corpus.StrongSpan, showStrongs bool) string {
 	if a >= b {
 		return ""
 	}
@@ -149,8 +150,27 @@ func renderVerseRange(text string, a, b int, italics, red []corpus.Span) string 
 		default:
 			out.WriteString(textStyle.Render(seg))
 		}
+		if showStrongs {
+			for _, s := range strongs {
+				if s.Start >= x && s.Start < y {
+					out.WriteString(strongTagStyle.Render("·" + s.Tag()))
+				}
+			}
+		}
 	}
 	return out.String()
+}
+
+// strongTagWidth estimates the extra cells needed to show Strong's tags in a
+// wrapped text range, so lines do not run past the column width.
+func strongTagWidth(spans []corpus.StrongSpan, a, b int) int {
+	n := 0
+	for _, s := range spans {
+		if s.Start >= a && s.Start < b {
+			n++
+		}
+	}
+	return n * 6
 }
 
 // highlightWords bolds whole-token matches in plain text. Tokens are folded

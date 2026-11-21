@@ -11,6 +11,7 @@ import (
 
 	"github.com/petealeon/tbible/v2/internal/corpus"
 	"github.com/petealeon/tbible/v2/internal/embedded"
+	"github.com/petealeon/tbible/v2/internal/library"
 	"github.com/petealeon/tbible/v2/internal/ref"
 	"github.com/petealeon/tbible/v2/internal/search"
 	"github.com/petealeon/tbible/v2/internal/tui"
@@ -27,9 +28,13 @@ func main() {
 		scopeFlag   = flag.String("scope", "all", "search scope: all, ot, nt, or book")
 		bookFlag    = flag.String("book", "", "restrict search to a book (implies --scope book)")
 		limit       = flag.Int("limit", 25, "maximum search results")
+		translation = flag.String("translation", "", "translation id: kjv or an installed pack")
+		listPacks   = flag.Bool("list-translations", false, "list installed translations and exit")
+		ephemeral   = flag.Bool("ephemeral", false, "keep notes, bookmarks and history in memory only (or set TBIBLE_EPHEMERAL=1)")
 	)
 	flag.Usage = usage
 	flag.Parse()
+	ephemeralOn := *ephemeral || os.Getenv("TBIBLE_EPHEMERAL") == "1"
 
 	if *showVersion {
 		fmt.Printf("tbible %s\n", version.Version)
@@ -37,10 +42,12 @@ func main() {
 	}
 
 	switch {
+	case *listPacks:
+		listTranslations()
 	case *query != "":
-		runSearchCommand(*query, *scopeFlag, *bookFlag, *limit, *asJSON, *plain)
+		runSearchCommand(*query, *scopeFlag, *bookFlag, *limit, *asJSON, *plain, *translation)
 	case *read != "":
-		b, err := embedded.Bible()
+		b, _, err := loadTranslation(*translation)
 		if err != nil {
 			fail(err)
 		}
@@ -48,7 +55,7 @@ func main() {
 			fail(err)
 		}
 	case flag.NArg() > 0:
-		runSearchCommand(strings.Join(flag.Args(), " "), *scopeFlag, *bookFlag, *limit, *asJSON, *plain)
+		runSearchCommand(strings.Join(flag.Args(), " "), *scopeFlag, *bookFlag, *limit, *asJSON, *plain, *translation)
 	default:
 		// The TUI is long-lived and keeps the embedded corpus and index eager.
 		// A lower GC target cuts steady-state RSS by roughly 3-4 MB without
@@ -56,19 +63,59 @@ func main() {
 		if _, ok := os.LookupEnv("GOGC"); !ok {
 			debug.SetGCPercent(50)
 		}
-		if err := tui.New(); err != nil {
+		if err := tui.New(tui.WithEphemeral(ephemeralOn)); err != nil {
 			fail(err)
 		}
 	}
 }
 
-func runSearchCommand(raw, scopeFlag, bookFlag string, limit int, asJSON, plain bool) {
-	b, ix, err := embedded.Load()
+func runSearchCommand(raw, scopeFlag, bookFlag string, limit int, asJSON, plain bool, translationID string) {
+	b, ix, err := loadTranslation(translationID)
 	if err != nil {
 		fail(err)
 	}
 	if err := runSearch(b, ix, raw, scopeFlag, bookFlag, limit, asJSON, plain); err != nil {
 		fail(err)
+	}
+}
+
+// loadTranslation resolves the embedded KJV or an installed data-only pack.
+// It never downloads anything; packs are installed explicitly in the TUI.
+func loadTranslation(id string) (*corpus.Bible, *search.Index, error) {
+	if id == "" || id == library.KJVId {
+		return embedded.Load()
+	}
+	lib, err := library.Default()
+	if err != nil {
+		return nil, nil, err
+	}
+	b, ix, err := lib.Get(id)
+	if err != nil {
+		available, _ := lib.Available()
+		ids := make([]string, len(available))
+		for i, t := range available {
+			ids[i] = t.ID
+		}
+		return nil, nil, fmt.Errorf("translation %q is not installed (available: %s)", id, strings.Join(ids, ", "))
+	}
+	return b, ix, nil
+}
+
+func listTranslations() {
+	lib, err := library.Default()
+	if err != nil {
+		fail(err)
+	}
+	available, err := lib.Available()
+	if err != nil {
+		fail(err)
+	}
+	for _, t := range available {
+		if t.KJV {
+			fmt.Printf("%-10s %s (built in)\n", t.ID, t.Name)
+		} else {
+			fmt.Printf("%-10s %s (%s)\n", t.ID, t.Name, lib.Dir())
+		}
 	}
 }
 
@@ -81,6 +128,10 @@ Usage:
   tbible --read REF           print a chapter, verse, or range
   tbible --search QUERY       rank verses for a word, phrase, or reference
   tbible QUERY                shorthand for --search
+  tbible --list-translations  show installed translations
+
+  Press T inside the TUI to choose a primary translation, show parallel
+  translations, or install a downloadable pack.
 
 Options:
 `, version.Version)

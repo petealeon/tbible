@@ -64,10 +64,14 @@ var commandDefs = []commandDef{
 	{"help", "Help", "Keyboard map and query syntax", "?"},
 	{"palette", "Command palette", "Run any action by name", "Ctrl-P"},
 	{"numbers", "Toggle verse numbers", "Show or hide verse numbers", "v"},
-	{"footnotes", "Toggle notes and footnotes", "Show or hide your notes and KJV marginal notes", "i"},
+	{"footnotes", "Toggle notes and footnotes", "Show or hide your notes and translation footnotes", "i"},
+	{"strongs", "Toggle Strong's numbers", "Show or hide inline Strong's tags (KJV corpus)", "s"},
+	{"strongs-entry", "Strong's dictionary", "Open the focused Strong's entry", "K"},
 	{"sidebar", "Toggle reader sidebar", "Chapter and bookmark details", "Ctrl-B"},
+	{"translations", "Translations", "Choose primary and parallel translations; manage packs", "T"},
+	{"refresh-catalog", "Refresh translation catalog", "Check for packs (explicit network action)", "Translations · U"},
 	{"scope", "Cycle search scope", "All, Old Testament, New Testament, current book", "f"},
-	{"heatmap", "Heatmap", "Visualise result concentration across books and chapters", "H"},
+	{"heatmap", "Heatmap", "Visualise result concentration across books and chapters", "H / Ctrl-H / F2"},
 	{"save-search", "Save search", "Keep the current query in the library", "S"},
 	{"copy", "Copy verse", "Copy the focused verse or range", "y"},
 	{"bookmark", "Bookmark verse", "Add or remove a bookmark", "b"},
@@ -130,6 +134,10 @@ func (m *model) handleSearchKey(msg tea.KeyMsg) tea.Cmd {
 		case "f":
 			m.cycleScope()
 			return nil
+		case "s":
+			return m.runCommand("strongs")
+		case "K":
+			return m.runCommand("strongs-entry")
 		case "H":
 			return m.openHeatmap()
 		case "S":
@@ -137,6 +145,8 @@ func (m *model) handleSearchKey(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		case "L":
 			return m.runCommand("library")
+		case "T":
+			return m.runCommand("translations")
 		case "?":
 			m.help = true
 			m.helpScroll = 0
@@ -168,6 +178,8 @@ func (m *model) handleSearchKey(msg tea.KeyMsg) tea.Cmd {
 		case ":":
 			m.openPalette()
 			return nil
+		case "T":
+			return m.runCommand("translations")
 		}
 	}
 
@@ -754,8 +766,25 @@ func (m *model) previewLines(width, height int) []string {
 			lines = append(lines, style.Render(h.Text[rg.Start:rg.End]))
 		}
 	}
-	for _, rg := range wrapRanges(v.Text, width) {
-		lines = append(lines, renderVerseRange(v.Text, rg.Start, rg.End, v.Italics(), v.RedLetter()))
+	strongs := v.Strongs()
+	textWidth := width
+	ranges := wrapRanges(v.Text, textWidth)
+	if m.showStrongs {
+		extra := 0
+		for _, rg := range ranges {
+			extra = max(extra, strongTagWidth(strongs, rg.Start, rg.End))
+		}
+		if extra > 0 {
+			textWidth = max(8, textWidth-extra)
+			ranges = wrapRanges(v.Text, textWidth)
+		}
+	}
+	for _, rg := range ranges {
+		lines = append(lines, renderVerseRange(v.Text, rg.Start, rg.End, v.Italics(), v.RedLetter(), strongs, m.showStrongs))
+	}
+	if len(m.parallel) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, m.parallelVerseLines(v, width)...)
 	}
 	if rangeVerses > 1 {
 		lines = append(lines, "", mutedStyle.Render(fmt.Sprintf("… %d verses selected · y copy · b bookmark", rangeVerses)))
@@ -766,6 +795,13 @@ func (m *model) previewLines(width, height int) []string {
 			for _, rg := range wrapRanges("↳ "+n.Text, width) {
 				lines = append(lines, noteStyle.Render(("↳ " + n.Text)[rg.Start:rg.End]))
 			}
+		}
+	}
+	if m.showStrongs {
+		summary := m.strongsSummary(v, width)
+		if len(summary) > 0 {
+			lines = append(lines, "")
+			lines = append(lines, summary...)
 		}
 	}
 	if note, ok := m.store.Note(r.Key()); ok && strings.TrimSpace(note.Body) != "" {

@@ -1,5 +1,6 @@
-Screenshots embedded in the root `README.md`:
+Screenshots embedded in the root `README.md`, captured from v2.1:
 
-- `tbible-v2.png` — main search and reader view, shown near the top.
-- `tbible-v2-heatmap.png` — full result heatmap, shown in the "Using the TUI"
-  section.
+- `tbible-v2.png` — main search results with the live reader preview.
+- `tbible-v2-heatmap.png` — full result heatmap.
+- `tbible-v2-translations.png` — translation picker with primary, parallel, and
+  downloadable pack rows.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/petealeon/tbible/v2/internal/heatmap"
 	"github.com/petealeon/tbible/v2/internal/ref"
@@ -41,6 +42,20 @@ type heatmapModel struct {
 func heatGlyph(level int) string {
 	level = min(max(level, 0), len(heatGlyphs)-1)
 	return heatGlyphs[level]
+}
+
+// closeHeatmap returns to the screen that opened the map and restores the
+// omnibox when the map was opened with Ctrl-H or F2 while typing.
+func (m *model) closeHeatmap() tea.Cmd {
+	m.heat.open = false
+	if m.heatReturnFocus {
+		m.heatReturnFocus = false
+		m.scr = screenSearch
+		m.resultsFocused = false
+		m.input.Focus()
+		return textinput.Blink
+	}
+	return nil
 }
 
 // openHeatmap shows the full-screen heatmap. The report itself is shared with
@@ -216,11 +231,9 @@ func (m *model) handleHeatmapKey(msg tea.KeyMsg) tea.Cmd {
 			h.scroll = 0
 			return nil
 		}
-		h.open = false
-		return nil
+		return m.closeHeatmap()
 	case "H":
-		h.open = false
-		return nil
+		return m.closeHeatmap()
 	case "d":
 		if h.mode == heatmap.ModeDensity {
 			h.mode = heatmap.ModeCount
@@ -267,7 +280,7 @@ func (m *model) handleHeatmapKey(msg tea.KeyMsg) tea.Cmd {
 			h.chptr = 0
 			h.scroll = 0
 		} else {
-			h.open = false
+			return m.closeHeatmap()
 		}
 		return nil
 	case "?":
@@ -275,7 +288,7 @@ func (m *model) handleHeatmapKey(msg tea.KeyMsg) tea.Cmd {
 		m.helpScroll = 0
 		return nil
 	case ":", "ctrl+p":
-		h.open = false
+		_ = m.closeHeatmap()
 		m.openPalette()
 		return nil
 	}

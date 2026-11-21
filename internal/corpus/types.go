@@ -14,6 +14,25 @@ type Span struct {
 	End   int
 }
 
+// StrongSpan is a Strong's-tagged word within a verse's Text. Number is the
+// bare lexicon number (7225 for H7225, 3056 for G3056); Greek distinguishes
+// the Hebrew and Greek lexicons.
+type StrongSpan struct {
+	Start  int
+	End    int
+	Number uint16
+	Greek  bool
+}
+
+// Tag formats the span's Strong's number as it appears in a lexicon, e.g.
+// "H7225" or "G3056".
+func (s StrongSpan) Tag() string {
+	if s.Greek {
+		return fmt.Sprintf("G%04d", s.Number)
+	}
+	return fmt.Sprintf("H%04d", s.Number)
+}
+
 // Note is a KJV marginal note attached to a verse. Anchor is a byte offset
 // used to place a marker in the text; it is approximate after whitespace
 // normalisation and may be zero for notes without a useful anchor.
@@ -54,11 +73,15 @@ type Chapter struct {
 
 // Verse is a single verse with display text and optional styling/notes.
 //
-// Decoration slices are deliberately not stored per verse: four slice headers
-// on all 31,102 verses cost more than the decorations themselves. Instead the
-// Bible keeps flat, borrowed decoration arrays and each verse stores only 16-bit
-// offsets and counts into them. Use the Italics, RedLetter, Notes and Headings
-// accessors to read a verse's decorations.
+// Decoration slices are deliberately not stored per verse: slice headers on
+// all 31,102 verses cost more than the decorations themselves. Instead the
+// Bible keeps flat, borrowed decoration arrays and each verse stores only
+// offsets and counts into them. Use the Italics, RedLetter, Notes, Headings
+// and Strongs accessors to read a verse's decorations.
+//
+// Italic, red-letter, note and heading offsets are 16-bit because those
+// decoration counts are small. Strong's spans are far more numerous (roughly
+// 314,000 in the KJV), so their offset is 32-bit.
 type Verse struct {
 	BookID  uint16
 	Chapter uint16
@@ -66,15 +89,17 @@ type Verse struct {
 	Flags   uint8
 	Text    string
 
-	decor   *decorations
-	italOff uint16
-	italLen uint16
-	redOff  uint16
-	redLen  uint16
-	noteOff uint16
-	noteLen uint16
-	headOff uint16
-	headLen uint16
+	decor     *decorations
+	italOff   uint16
+	italLen   uint16
+	redOff    uint16
+	redLen    uint16
+	noteOff   uint16
+	noteLen   uint16
+	headOff   uint16
+	headLen   uint16
+	strongOff uint32
+	strongLen uint16
 }
 
 // decorations holds the flat decoration arrays shared by every verse in a
@@ -84,6 +109,7 @@ type decorations struct {
 	redLetter []Span
 	notes     []Note
 	headings  []Heading
+	strongs   []StrongSpan
 }
 
 // VerseDecorations is the builder-side representation of a verse's optional
@@ -93,6 +119,7 @@ type VerseDecorations struct {
 	RedLetter []Span
 	Notes     []Note
 	Headings  []Heading
+	Strongs   []StrongSpan
 }
 
 // Bible is the complete corpus.
@@ -153,6 +180,18 @@ func (v *Verse) Headings() []Heading {
 	return v.decor.headings[v.headOff : v.headOff+v.headLen]
 }
 
+// Strongs returns the Strong's-tagged words for v, in text order.
+func (v *Verse) Strongs() []StrongSpan {
+	if v == nil || v.decor == nil || v.strongLen == 0 {
+		return nil
+	}
+	end := int(v.strongOff) + int(v.strongLen)
+	if end > len(v.decor.strongs) {
+		return nil
+	}
+	return v.decor.strongs[v.strongOff:end]
+}
+
 // Prepare builds lookup maps and flattens builder-supplied decorations into
 // shared arrays. It is idempotent.
 func (b *Bible) Prepare() {
@@ -171,27 +210,35 @@ func (b *Bible) Prepare() {
 }
 
 func (b *Bible) buildDecorations() {
-	var italics, red, notes, headings int
+	var italics, red, notes, headings, strongs int
 	for i := range b.sourceDecor {
 		d := &b.sourceDecor[i]
 		italics += len(d.Italics)
 		red += len(d.RedLetter)
 		notes += len(d.Notes)
 		headings += len(d.Headings)
+		strongs += len(d.Strongs)
 	}
-	check := func(n int, what string) uint16 {
+	check16 := func(n int, what string) uint16 {
 		if n > math.MaxUint16 {
 			panic(fmt.Sprintf("corpus: too many %s (%d)", what, n))
 		}
 		return uint16(n)
+	}
+	check32 := func(n int, what string) uint32 {
+		if uint64(n) > math.MaxUint32 {
+			panic(fmt.Sprintf("corpus: too many %s (%d)", what, n))
+		}
+		return uint32(n)
 	}
 	b.decor = decorations{
 		italics:   make([]Span, italics),
 		redLetter: make([]Span, red),
 		notes:     make([]Note, notes),
 		headings:  make([]Heading, headings),
+		strongs:   make([]StrongSpan, strongs),
 	}
-	var oi, or, on, oh int
+	var oi, or, on, oh, os int
 	for i := range b.Verses {
 		var d VerseDecorations
 		if i < len(b.sourceDecor) {
@@ -199,18 +246,21 @@ func (b *Bible) buildDecorations() {
 		}
 		v := &b.Verses[i]
 		v.decor = &b.decor
-		v.italOff, v.italLen = check(oi, "italic spans"), check(len(d.Italics), "italic spans")
-		v.redOff, v.redLen = check(or, "red-letter spans"), check(len(d.RedLetter), "red-letter spans")
-		v.noteOff, v.noteLen = check(on, "notes"), check(len(d.Notes), "notes")
-		v.headOff, v.headLen = check(oh, "headings"), check(len(d.Headings), "headings")
+		v.italOff, v.italLen = check16(oi, "italic spans"), check16(len(d.Italics), "italic spans")
+		v.redOff, v.redLen = check16(or, "red-letter spans"), check16(len(d.RedLetter), "red-letter spans")
+		v.noteOff, v.noteLen = check16(on, "notes"), check16(len(d.Notes), "notes")
+		v.headOff, v.headLen = check16(oh, "headings"), check16(len(d.Headings), "headings")
+		v.strongOff, v.strongLen = check32(os, "Strong's spans"), check16(len(d.Strongs), "Strong's spans")
 		copy(b.decor.italics[oi:], d.Italics)
 		copy(b.decor.redLetter[or:], d.RedLetter)
 		copy(b.decor.notes[on:], d.Notes)
 		copy(b.decor.headings[oh:], d.Headings)
+		copy(b.decor.strongs[os:], d.Strongs)
 		oi += len(d.Italics)
 		or += len(d.RedLetter)
 		on += len(d.Notes)
 		oh += len(d.Headings)
+		os += len(d.Strongs)
 	}
 	b.decorBuilt = true
 	b.sourceDecor = nil
@@ -394,6 +444,9 @@ func (b *Bible) Validate() error {
 		if err := validateSpans(v.RedLetter(), len(v.Text)); err != nil {
 			return fmt.Errorf("corpus: verse %d red letter: %w", i, err)
 		}
+		if err := validateStrongs(v.Strongs(), len(v.Text)); err != nil {
+			return fmt.Errorf("corpus: verse %d Strong's: %w", i, err)
+		}
 		for _, n := range v.Notes() {
 			if n.Anchor < 0 || n.Anchor > len(v.Text) {
 				return fmt.Errorf("corpus: verse %d note anchor out of range", i)
@@ -440,6 +493,23 @@ func validateSpans(spans []Span, textLen int) error {
 		if s.Start < 0 || s.End < s.Start || s.End > textLen {
 			return fmt.Errorf("span %d [%d:%d] outside text length %d", i, s.Start, s.End, textLen)
 		}
+	}
+	return nil
+}
+
+func validateStrongs(spans []StrongSpan, textLen int) error {
+	prev := -1
+	for i, s := range spans {
+		if s.Start < 0 || s.End <= s.Start || s.End > textLen {
+			return fmt.Errorf("span %d [%d:%d] outside text length %d", i, s.Start, s.End, textLen)
+		}
+		if s.Number == 0 {
+			return fmt.Errorf("span %d has no number", i)
+		}
+		if s.Start < prev {
+			return fmt.Errorf("span %d is out of order", i)
+		}
+		prev = s.Start
 	}
 	return nil
 }

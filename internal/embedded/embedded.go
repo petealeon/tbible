@@ -3,11 +3,13 @@
 package embedded
 
 import (
+	"bytes"
 	_ "embed"
 	"sync"
 
 	"github.com/petealeon/tbible/v2/internal/corpus"
 	"github.com/petealeon/tbible/v2/internal/search"
+	"github.com/petealeon/tbible/v2/internal/strongs"
 )
 
 //go:embed data/kjv.tbc
@@ -15,6 +17,9 @@ var corpusBlob []byte
 
 //go:embed data/kjv.tbi
 var indexBlob []byte
+
+//go:embed data/strongs.json.gz
+var strongsBlob []byte
 
 var (
 	bibleOnce sync.Once
@@ -24,6 +29,10 @@ var (
 	indexOnce sync.Once
 	index     *search.Index
 	indexErr  error
+
+	strongsOnce sync.Once
+	dict        *strongs.Dictionary
+	strongsErr  error
 )
 
 // Bible returns the embedded KJV corpus. The result is shared and read-only.
@@ -61,8 +70,20 @@ func Load() (*corpus.Bible, *search.Index, error) {
 	return b, ix, nil
 }
 
+// Strongs returns the embedded STEPBible lexicon. It is decompressed on first
+// use and shared for the life of the process.
+func Strongs() (*strongs.Dictionary, error) {
+	strongsOnce.Do(func() {
+		dict, strongsErr = strongs.Parse(bytes.NewReader(strongsBlob))
+	})
+	return dict, strongsErr
+}
+
 // CorpusBytes exposes the raw embedded corpus for verification tools.
 func CorpusBytes() []byte { return corpusBlob }
 
 // IndexBytes exposes the raw embedded index for verification tools.
 func IndexBytes() []byte { return indexBlob }
+
+// StrongsBytes exposes the compressed lexicon for verification tools.
+func StrongsBytes() []byte { return strongsBlob }

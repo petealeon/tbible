@@ -10,12 +10,15 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/petealeon/tbible/v2/internal/catalog"
 	"github.com/petealeon/tbible/v2/internal/clipboard"
 	"github.com/petealeon/tbible/v2/internal/corpus"
 	"github.com/petealeon/tbible/v2/internal/embedded"
+	"github.com/petealeon/tbible/v2/internal/library"
 	"github.com/petealeon/tbible/v2/internal/ref"
 	"github.com/petealeon/tbible/v2/internal/search"
 	"github.com/petealeon/tbible/v2/internal/store"
+	"github.com/petealeon/tbible/v2/internal/strongs"
 	"github.com/petealeon/tbible/v2/internal/version"
 )
 
@@ -31,6 +34,18 @@ type model struct {
 	bible *corpus.Bible
 	index *search.Index
 	store *store.Store
+
+	// packLib resolves the embedded KJV plus installed data-only packs.
+	packLib       *library.Library
+	cat           *catalog.Catalog
+	translationID string
+	parallelIDs   []string
+	parallel      []parallelView
+
+	transOpen bool
+	transSel  int
+	transRows []transRow
+	transBusy bool
 
 	width, height int
 	scr           screen
@@ -75,7 +90,29 @@ type model struct {
 
 	showVerseNumbers bool
 	showFootnotes    bool
+	showStrongs      bool
 	sidebar          bool
+
+	// hidden blanks the screen instantly for readers who need to conceal it.
+	// Any key restores the previous view without being interpreted.
+	hidden bool
+
+	// selecting highlights a passage chosen with V in the reader. The anchor
+	// stays after V finishes so y/b/n act on the same range; Esc clears it.
+	selecting       bool
+	selAnchor       ref.Reference
+	selHead         ref.Reference
+	heatReturnFocus bool
+
+	// Strong's overlay state. spans belong to the verse the overlay was
+	// opened from; j/k walks through them.
+	strongsOpen   bool
+	strongsDict   *strongs.Dictionary
+	strongsSpans  []corpus.StrongSpan
+	strongsText   string
+	strongsVerse  string
+	strongsIndex  int
+	strongsScroll int
 }
 
 type copiedMsg struct {
@@ -88,8 +125,25 @@ type savedMsg struct{ err error }
 // persistStateMsg is delivered by the debounce timer after history changes.
 type persistStateMsg struct{}
 
+// Options control how the TUI starts.
+type options struct {
+	ephemeral bool
+}
+
+// Option customises TUI startup.
+type Option func(*options)
+
+// WithEphemeral starts the TUI without reading or writing user state.
+func WithEphemeral(v bool) Option {
+	return func(o *options) { o.ephemeral = v }
+}
+
 // New starts the TUI.
-func New() error {
+func New(opts ...Option) error {
+	var o options
+	for _, apply := range opts {
+		apply(&o)
+	}
 	b, err := embedded.Bible()
 	if err != nil {
 		return err
@@ -98,7 +152,12 @@ func New() error {
 	if err != nil {
 		return err
 	}
-	st, err := store.Load()
+	var st *store.Store
+	if o.ephemeral {
+		st, err = store.LoadEphemeral()
+	} else {
+		st, err = store.Load()
+	}
 	if err != nil {
 		return err
 	}
@@ -110,7 +169,14 @@ func New() error {
 }
 
 func newModel(b *corpus.Bible, ix *search.Index, st *store.Store) *model {
-	m := &model{bible: b, index: ix, store: st}
+	m := &model{
+		bible:         b,
+		index:         ix,
+		store:         st,
+		packLib:       defaultLibrary(),
+		translationID: library.KJVId,
+	}
+	m.cat, _ = catalog.Embedded()
 
 	ti := textinput.New()
 	ti.Prompt = "/ "
@@ -136,10 +202,20 @@ func newModel(b *corpus.Bible, ix *search.Index, st *store.Store) *model {
 	m.initCalendar()
 
 	s := st.Settings()
+	if s.Translation != "" && m.packLib.Has(s.Translation) {
+		if nb, nx, err := m.packLib.Get(s.Translation); err == nil {
+			m.bible, m.index, m.translationID = nb, nx, s.Translation
+		}
+	}
+	m.parallelIDs = cleanParallelIDs(s.Parallel, m.translationID)
+	m.loadParallel()
 	m.showVerseNumbers = s.VerseNumbers
 	m.showFootnotes = s.Footnotes
+	m.showStrongs = s.Strongs
 	m.reader.showNumbers = s.VerseNumbers
 	m.reader.showNotes = s.Footnotes
+	m.reader.showStrongs = s.Strongs
+	m.ensureDictionary()
 	if warning := st.Warning(); warning != "" {
 		m.setStatus(warning, true)
 	}
@@ -180,12 +256,45 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.persistPending = false
 		st := m.store
 		return m, func() tea.Msg { return savedMsg{st.Save()} }
+	case catalogMsg:
+		m.finishCatalogRefresh(msg)
+		return m, nil
+	case packMsg:
+		m.finishPackAction(msg)
+		return m, nil
 	case tea.KeyMsg:
 		m.status = ""
 		if msg.String() == "ctrl+c" {
 			// History and last-read writes are debounced; flush them on quit.
 			_ = m.store.Save()
 			return m, tea.Quit
+		}
+		if msg.String() == "ctrl+x" {
+			m.hidden = !m.hidden
+			return m, nil
+		}
+		if m.hidden {
+			// Swallow the key that restores the screen.
+			m.hidden = false
+			return m, nil
+		}
+		// The heatmap is reachable while typing in the omnibox, where H is
+		// ordinary text. Ctrl-H works regardless of focus; F2 is an alias.
+		if key := msg.String(); key == "ctrl+h" || key == "f2" {
+			if m.heat.open {
+				return m, m.closeHeatmap()
+			}
+			if m.scr == screenSearch && !m.resultsFocused && strings.TrimSpace(m.input.Value()) != "" {
+				m.rebuild()
+			}
+			m.heatReturnFocus = m.scr == screenSearch && !m.resultsFocused
+			return m, m.openHeatmap()
+		}
+		if m.strongsOpen {
+			return m, m.handleStrongsKey(msg)
+		}
+		if m.transOpen {
+			return m, m.handleTransKey(msg)
 		}
 		if m.help {
 			return m, m.handleHelpKey(msg)
@@ -223,11 +332,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) View() string {
-	if m.width <= 0 || m.height <= 0 {
+	if m.width <= 0 || m.height <= 0 || m.hidden {
 		return ""
 	}
 	if m.help {
 		return m.helpView()
+	}
+	if m.strongsOpen {
+		return m.strongsView()
+	}
+	if m.transOpen {
+		return m.transView()
 	}
 	if m.palette {
 		return m.paletteView()
@@ -238,6 +353,12 @@ func (m *model) View() string {
 	if m.heat.open {
 		return m.heatmapView()
 	}
+	return m.screenView()
+}
+
+// screenView renders whichever normal screen is active. The note editor uses
+// it to keep the underlying screen visible above the docked panel.
+func (m *model) screenView() string {
 	switch m.scr {
 	case screenReader:
 		return m.readerView()
@@ -264,14 +385,21 @@ func (m *model) userNotes() map[string]store.Note {
 	return out
 }
 
+func (m *model) currentSettings() store.Settings {
+	return store.Settings{
+		VerseNumbers: m.showVerseNumbers,
+		Footnotes:    m.showFootnotes,
+		Strongs:      m.showStrongs,
+		Translation:  m.translationID,
+		Parallel:     append([]string(nil), m.parallelIDs...),
+		CopyFormat:   m.store.Settings().CopyFormat,
+	}
+}
+
 func (m *model) SaveSettings() tea.Cmd {
 	// Capture values now: tea.Cmd runs on another goroutine, and the model may
 	// change again before the save executes.
-	settings := store.Settings{
-		VerseNumbers: m.showVerseNumbers,
-		Footnotes:    m.showFootnotes,
-		CopyFormat:   m.store.Settings().CopyFormat,
-	}
+	settings := m.currentSettings()
 	st := m.store
 	return func() tea.Msg { return savedMsg{st.SetSettings(settings)} }
 }
@@ -381,12 +509,109 @@ func (m *model) focusedVerse() (ref.Reference, *corpus.Verse, bool) {
 	return r, v, true
 }
 
+// readerSelection returns the ordered range marked with V. It remains
+// available after V finishes so the next copy/bookmark/note uses the passage.
+func (m *model) readerSelection() (ref.Reference, bool) {
+	if m.scr != screenReader || m.selAnchor.BookID == 0 || m.selHead.BookID != m.selAnchor.BookID {
+		return ref.Reference{}, false
+	}
+	first, last := m.selAnchor, m.selHead
+	if first.Chapter > last.Chapter || (first.Chapter == last.Chapter && first.Verse > last.Verse) {
+		first, last = last, first
+	}
+	r := ref.Reference{
+		BookID:  first.BookID,
+		Chapter: first.Chapter,
+		Verse:   first.Verse,
+	}
+	if last.Chapter > first.Chapter {
+		r.EndChapter = last.Chapter
+		r.EndVerse = last.Verse
+	} else if last.Verse > first.Verse {
+		r.EndVerse = last.Verse
+	}
+	return r, true
+}
+
+// selectionInChapter returns the verse bounds of the active selection in one
+// chapter, for highlighting while reading.
+func (m *model) selectionInChapter(chapter uint16) (uint16, uint16, bool) {
+	r, ok := m.readerSelection()
+	if !ok || r.BookID != m.reader.bookID {
+		return 0, 0, false
+	}
+	lastCh := r.LastChapter()
+	if chapter < r.Chapter || chapter > lastCh {
+		return 0, 0, false
+	}
+	first := uint16(1)
+	last := uint16(m.readerMaxVerse())
+	if chapter == r.Chapter {
+		first = r.Verse
+	}
+	if chapter == lastCh {
+		if r.EndVerse != 0 {
+			last = r.EndVerse
+		} else if lastCh == r.Chapter {
+			last = r.Verse
+		}
+	}
+	return first, last, true
+}
+
+// beginSelection starts a passage selection at the cursor.
+func (m *model) beginSelection() {
+	r := ref.Reference{BookID: m.reader.bookID, Chapter: m.reader.chapter, Verse: uint16(max(1, m.reader.verse))}
+	m.selecting, m.selAnchor, m.selHead = true, r, r
+	m.setStatus("Selecting passage · j/k move · y copy · V finish · Esc cancel", false)
+}
+
+// extendSelection updates the far end of the passage after navigation.
+func (m *model) extendSelection() {
+	if !m.selecting {
+		return
+	}
+	m.selHead = ref.Reference{BookID: m.reader.bookID, Chapter: m.reader.chapter, Verse: uint16(max(1, m.reader.verse))}
+	if m.selHead.BookID != m.selAnchor.BookID {
+		// Passages in one selection stay inside one book; chapter ranges are
+		// supported, but silently mixing testaments would be surprising.
+		m.clearSelection()
+		m.setStatus("Selection stays within one book", true)
+		return
+	}
+	if r, ok := m.readerSelection(); ok {
+		m.setStatus("Selected "+r.Label(m.bible)+" · V done · Esc cancel", false)
+	}
+}
+
+// endSelection stops highlighting but leaves the range ready for one action.
+func (m *model) endSelection() {
+	m.selecting = false
+	if r, ok := m.readerSelection(); ok {
+		m.setStatus("Selected "+r.Label(m.bible)+" · y copy · Esc clear", false)
+	}
+}
+
+// clearSelection discards the passage range completely.
+func (m *model) clearSelection() {
+	m.selecting = false
+	m.selAnchor, m.selHead = ref.Reference{}, ref.Reference{}
+}
+
 // focusedRange returns the multi-verse selection represented by the focused
 // row: a chapter row (including chapter ranges) or a reference row spanning
-// several verses. Reader and single-verse rows are not ranges.
+// several verses. In the reader it is the passage marked with V.
 func (m *model) focusedRange() (ref.Reference, []*corpus.Verse, bool) {
 	if m.scr == screenReader {
-		return ref.Reference{}, nil, false
+		r, ok := m.readerSelection()
+		if !ok {
+			return ref.Reference{}, nil, false
+		}
+		verses := r.Verses(m.bible)
+		if len(verses) == 0 {
+			return ref.Reference{}, nil, false
+		}
+		return r, verses, true
 	}
 	row, ok := m.focusedRow()
 	if !ok {
@@ -416,6 +641,7 @@ func (m *model) copyFocused() tea.Cmd {
 	if r, verses, ok := m.focusedRange(); ok {
 		label := r.Label(m.bible)
 		text := m.copyRangeText(r, verses)
+		m.clearSelection()
 		return func() tea.Msg { return copiedMsg{label: label, err: clipboard.Copy(text)} }
 	}
 	r, v, ok := m.focusedVerse()
@@ -438,6 +664,16 @@ func (m *model) copyRangeText(r ref.Reference, verses []*corpus.Verse) string {
 		parts[i] = v.Text
 	}
 	body := strings.Join(parts, " ")
+	if len(m.parallel) > 0 {
+		switch m.store.Settings().CopyFormat {
+		case "ref":
+			return r.Label(m.bible)
+		case "text":
+			return m.parallelCopyText(verses)
+		default:
+			return r.Label(m.bible) + "\n\n" + m.parallelCopyText(verses)
+		}
+	}
 	switch m.store.Settings().CopyFormat {
 	case "text":
 		return body
@@ -449,6 +685,16 @@ func (m *model) copyRangeText(r ref.Reference, verses []*corpus.Verse) string {
 }
 
 func (m *model) copyText(r ref.Reference, v *corpus.Verse) string {
+	if len(m.parallel) > 0 {
+		switch m.store.Settings().CopyFormat {
+		case "ref":
+			return r.Label(m.bible)
+		case "text":
+			return m.parallelCopyText([]*corpus.Verse{v})
+		default:
+			return r.Label(m.bible) + "\n\n" + m.parallelCopyText([]*corpus.Verse{v})
+		}
+	}
 	switch m.store.Settings().CopyFormat {
 	case "text":
 		return v.Text
@@ -482,6 +728,7 @@ func (m *model) toggleBookmark() tea.Cmd {
 		if m.scr == screenLibrary {
 			m.rebuildLibrary()
 		}
+		m.clearSelection()
 		return nil
 	}
 
@@ -552,6 +799,7 @@ func (m *model) handleNoteKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		m.noteOpen = false
 		m.noteInput.Blur()
+		m.clearSelection()
 		if m.scr == screenLibrary {
 			m.rebuildLibrary()
 		}
@@ -725,6 +973,9 @@ func (m *model) chapterStep(delta int) tea.Cmd {
 }
 
 func (m *model) bookStep(delta int) tea.Cmd {
+	if m.selAnchor.BookID != 0 {
+		m.clearSelection()
+	}
 	bookID := m.reader.bookID
 	if delta > 0 && bookID < 66 {
 		bookID++
@@ -788,9 +1039,25 @@ func (m *model) runCommand(id string) tea.Cmd {
 			m.setStatus("Notes & footnotes off", false)
 		}
 		return m.SaveSettings()
+	case "strongs":
+		return m.toggleStrongs()
+	case "strongs-entry":
+		r, v, ok := m.focusedVerse()
+		if !ok {
+			m.setStatus("Select a verse first", true)
+			return nil
+		}
+		return m.openStrongs(r, v)
 	case "sidebar":
 		m.sidebar = !m.sidebar
 		return nil
+	case "translations":
+		return m.openTrans()
+	case "refresh-catalog":
+		if !m.transOpen {
+			m.openTrans()
+		}
+		return m.refreshCatalog()
 	case "scope":
 		m.cycleScope()
 		return nil
@@ -828,7 +1095,7 @@ func (m *model) headerLine(left, right string) string {
 }
 
 func (m *model) headerLeft() string {
-	return appTitle.Render("tbible") + "  " + appSubtitle.Render("KJV")
+	return appTitle.Render("tbible") + "  " + appSubtitle.Render(m.translationLabel())
 }
 
 func (m *model) headerRight() string {

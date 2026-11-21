@@ -123,4 +123,59 @@ func TestParseStylesAndNotes(t *testing.T) {
 	if len(v.Headings()) == 0 {
 		t.Error("Psalm 3:1 has no title heading")
 	}
+
+	// Genesis 1:1 carries Strong's tags on every content word.
+	v = b.VerseAt(1, 1, 1)
+	strongs := v.Strongs()
+	if len(strongs) < 5 {
+		t.Fatalf("Genesis 1:1 has %d Strong's spans", len(strongs))
+	}
+	want := map[string]uint16{"beginning": 7225, "God": 430, "created": 1254, "heaven": 8064, "earth": 776}
+	for word, number := range want {
+		found := false
+		for _, s := range strongs {
+			if v.Text[s.Start:s.End] == word && s.Number == number && !s.Greek {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Genesis 1:1 has no H%04d tag on %q", number, word)
+		}
+	}
+	// Greek tags use the same span type.
+	john := b.VerseAt(43, 3, 16)
+	hasGreek := false
+	for _, s := range john.Strongs() {
+		if s.Greek {
+			hasGreek = true
+			break
+		}
+	}
+	if !hasGreek {
+		t.Error("John 3:16 has no Greek Strong's tags")
+	}
+}
+
+func TestParseStrong(t *testing.T) {
+	cases := []struct {
+		attrs  string
+		number uint16
+		greek  bool
+		ok     bool
+	}{
+		{`strong="H7225"`, 7225, false, true},
+		{`strong="G3056"`, 3056, true, true},
+		{`strong="H7225G"`, 7225, false, true},
+		{`strong="H7225,H7226"`, 7225, false, true},
+		{`lemma="x" strong='g2316'`, 2316, true, true},
+		{`lemma="x"`, 0, false, false},
+		{`strong="X1"`, 0, false, false},
+	}
+	for _, c := range cases {
+		n, g, ok := parseStrong(c.attrs)
+		if n != c.number || g != c.greek || ok != c.ok {
+			t.Errorf("parseStrong(%q) = %d, %v, %v; want %d, %v, %v", c.attrs, n, g, ok, c.number, c.greek, c.ok)
+		}
+	}
 }

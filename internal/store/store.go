@@ -58,9 +58,12 @@ func (ss SavedSearch) Same(query, scope string, bookID uint16) bool {
 
 // Settings holds persistent display preferences.
 type Settings struct {
-	VerseNumbers bool   `json:"verse_numbers"`
-	Footnotes    bool   `json:"footnotes"`
-	CopyFormat   string `json:"copy_format"`
+	VerseNumbers bool     `json:"verse_numbers"`
+	Footnotes    bool     `json:"footnotes"`
+	Strongs      bool     `json:"strongs,omitempty"`
+	Translation  string   `json:"translation,omitempty"`
+	Parallel     []string `json:"parallel,omitempty"`
+	CopyFormat   string   `json:"copy_format"`
 }
 
 // State is the complete on-disk document.
@@ -76,10 +79,11 @@ type State struct {
 
 // Store is a loaded state document.
 type Store struct {
-	mu      sync.Mutex
-	path    string
-	state   State
-	warning string
+	mu        sync.Mutex
+	path      string
+	state     State
+	warning   string
+	ephemeral bool
 }
 
 // DefaultPath returns the platform configuration path for state.json.
@@ -105,6 +109,29 @@ func Load() (*Store, error) {
 		return nil, err
 	}
 	return LoadPath(path)
+}
+
+// LoadEphemeral returns a store that keeps everything in memory. Nothing is
+// read from or written to disk, which matters for readers who cannot safely
+// leave traces of their Bible study behind.
+func LoadEphemeral() (*Store, error) {
+	path, err := DefaultPath()
+	if err != nil {
+		return nil, err
+	}
+	s := &Store{path: path, ephemeral: true}
+	s.resetLocked()
+	return s, nil
+}
+
+// Ephemeral reports whether this store deliberately touches no disk.
+func (s *Store) Ephemeral() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ephemeral
 }
 
 // LoadPath reads a specific state file. A missing or empty file yields an
@@ -218,6 +245,9 @@ func (s *Store) Save() error {
 }
 
 func (s *Store) saveLocked() error {
+	if s.ephemeral {
+		return nil
+	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}

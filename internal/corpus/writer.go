@@ -8,27 +8,33 @@ import (
 	"math"
 )
 
-// Binary format (version 1), all integers little-endian.
+// Binary format (version 2), all integers little-endian.
 //
-//	header (72 bytes)
+//	header (80 bytes)
 //	string blob
-//	book records     (22 bytes each)
-//	chapter records  (12 bytes each)
-//	verse records    (40 bytes each)
-//	span records     (8 bytes each)
-//	note records     (12 bytes each)
-//	heading records  (12 bytes each)
+//	book records       (22 bytes each)
+//	chapter records    (12 bytes each)
+//	verse records      (48 bytes each)
+//	span records       (8 bytes each)
+//	note records       (12 bytes each)
+//	heading records    (12 bytes each)
+//	Strong's records   (8 bytes each)
+//
+// Version 2 adds Strong's-tagged word spans. The verse record grew from 40 to
+// 48 bytes to carry a 32-bit Strong's offset and a 16-bit count; the header
+// grew from 72 to 80 bytes to address the new section.
 const (
-	Magic         = "TBC2"
-	FormatVersion = 1
-	headerSize    = 72
+	Magic         = "TBC3"
+	FormatVersion = 2
+	headerSize    = 80
 
 	bookRecordSize    = 22
 	chapterRecordSize = 12
-	verseRecordSize   = 40
+	verseRecordSize   = 48
 	spanRecordSize    = 8
 	noteRecordSize    = 12
 	headingRecordSize = 12
+	strongRecordSize  = 8
 )
 
 // Write serialises b in the compact corpus format.
@@ -72,6 +78,7 @@ func Write(w io.Writer, b *Bible) (int64, error) {
 	spans := make([]byte, 0, 64*1024)
 	notes := make([]byte, 0, 32*1024)
 	headings := make([]byte, 0, 16*1024)
+	strongs := make([]byte, 0, 320*1024)
 
 	writeSpans := func(list []Span) (uint32, uint16) {
 		off := uint32(len(spans))
@@ -121,6 +128,24 @@ func Write(w io.Writer, b *Bible) (int64, error) {
 		return off, uint16(len(list))
 	}
 
+	writeStrongs := func(list []StrongSpan) (uint32, uint16) {
+		off := uint32(len(strongs))
+		for _, s := range list {
+			var r [strongRecordSize]byte
+			binary.LittleEndian.PutUint16(r[0:2], uint16(s.Start))
+			binary.LittleEndian.PutUint16(r[2:4], uint16(s.End))
+			if s.Greek {
+				r[4] = 1
+			}
+			binary.LittleEndian.PutUint16(r[6:8], s.Number)
+			strongs = append(strongs, r[:]...)
+		}
+		if len(list) > math.MaxUint16 {
+			panic("too many Strong's spans")
+		}
+		return off, uint16(len(list))
+	}
+
 	for i := range b.Verses {
 		v := &b.Verses[i]
 		to, tl := str.add(v.Text)
@@ -128,8 +153,9 @@ func Write(w io.Writer, b *Bible) (int64, error) {
 		ro, rc := writeSpans(v.RedLetter())
 		no, nc := writeNotes(v.Notes())
 		ho, hc := writeHeadings(v.Headings())
+		so, sc := writeStrongs(v.Strongs())
 
-		var r [40]byte
+		var r [verseRecordSize]byte
 		binary.LittleEndian.PutUint16(r[0:2], v.BookID)
 		binary.LittleEndian.PutUint16(r[2:4], v.Chapter)
 		binary.LittleEndian.PutUint16(r[4:6], v.Number)
@@ -144,6 +170,8 @@ func Write(w io.Writer, b *Bible) (int64, error) {
 		binary.LittleEndian.PutUint16(r[32:34], nc)
 		binary.LittleEndian.PutUint32(r[34:38], ho)
 		binary.LittleEndian.PutUint16(r[38:40], hc)
+		binary.LittleEndian.PutUint32(r[40:44], so)
+		binary.LittleEndian.PutUint16(r[44:46], sc)
 		verses = append(verses, r[:]...)
 	}
 
@@ -162,6 +190,7 @@ func Write(w io.Writer, b *Bible) (int64, error) {
 	spansOff := next(len(spans))
 	notesOff := next(len(notes))
 	headingsOff := next(len(headings))
+	strongsOff := next(len(strongs))
 	total := off
 
 	hdr := make([]byte, headerSize)
@@ -184,12 +213,14 @@ func Write(w io.Writer, b *Bible) (int64, error) {
 	binary.LittleEndian.PutUint32(hdr[56:60], uint32(len(notes)))
 	binary.LittleEndian.PutUint32(hdr[60:64], headingsOff)
 	binary.LittleEndian.PutUint32(hdr[64:68], uint32(len(headings)))
-	// hdr[68:72] reserved
+	binary.LittleEndian.PutUint32(hdr[68:72], strongsOff)
+	binary.LittleEndian.PutUint32(hdr[72:76], uint32(len(strongs)))
+	// hdr[76:80] reserved
 
 	wb := bufio.NewWriterSize(w, 256*1024)
-	sections := [][]byte{hdr, blob, books, chapters, verses, spans, notes, headings}
+	sections := [][]byte{hdr, blob, books, chapters, verses, spans, notes, headings, strongs}
 	// Pad between sections to match the offsets above.
-	offsets := []uint32{0, stringOff, booksOff, chaptersOff, versesOff, spansOff, notesOff, headingsOff}
+	offsets := []uint32{0, stringOff, booksOff, chaptersOff, versesOff, spansOff, notesOff, headingsOff, strongsOff}
 	written := uint32(0)
 	for i, sec := range sections {
 		if offsets[i] < written {

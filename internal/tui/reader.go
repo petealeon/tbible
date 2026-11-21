@@ -20,6 +20,7 @@ type readerModel struct {
 
 	showNumbers bool
 	showNotes   bool
+	showStrongs bool
 }
 
 // readerLine is one rendered line of the chapter body. Verse is the verse the
@@ -79,6 +80,7 @@ func (m *model) readerLayout(width int) ([]readerLine, map[int]int) {
 	width = max(10, width)
 	verses := m.bible.ChapterVerses(m.reader.bookID, m.reader.chapter)
 	notes := m.userNotes()
+	selFirst, selLast, inSelection := m.selectionInChapter(m.reader.chapter)
 	lines := make([]readerLine, 0, len(verses)*3)
 	verseLine := make(map[int]int, len(verses))
 
@@ -110,6 +112,9 @@ func (m *model) readerLayout(width int) ([]readerLine, map[int]int) {
 
 		marker := "  "
 		num := ""
+		if inSelection && vn >= int(selFirst) && vn <= int(selLast) {
+			marker = cursorMarker.Render("┃ ")
+		}
 		if selected {
 			marker = cursorMarker.Render("▌ ")
 		}
@@ -130,15 +135,28 @@ func (m *model) readerLayout(width int) ([]readerLine, map[int]int) {
 		prefixWidth := lipgloss.Width(prefix)
 		textWidth := max(8, width-prefixWidth)
 		pad := strings.Repeat(" ", prefixWidth)
-
+		strongs := v.Strongs()
 		ranges := wrapRanges(v.Text, textWidth)
+		if m.reader.showStrongs {
+			extra := 0
+			for _, rg := range ranges {
+				extra = max(extra, strongTagWidth(strongs, rg.Start, rg.End))
+			}
+			if extra > 0 {
+				textWidth = max(8, textWidth-extra)
+				ranges = wrapRanges(v.Text, textWidth)
+			}
+		}
 		for j, rg := range ranges {
-			text := renderVerseRange(v.Text, rg.Start, rg.End, v.Italics(), v.RedLetter())
+			text := renderVerseRange(v.Text, rg.Start, rg.End, v.Italics(), v.RedLetter(), strongs, m.reader.showStrongs)
 			if j == 0 {
 				lines = append(lines, readerLine{text: prefix + text, verse: vn})
 			} else {
 				lines = append(lines, readerLine{text: pad + text, verse: vn})
 			}
+		}
+		for _, line := range m.parallelVerseLines(v, width-max(2, prefixWidth)) {
+			lines = append(lines, readerLine{text: pad + line, verse: vn})
 		}
 
 		if m.reader.showNotes {
@@ -225,6 +243,30 @@ func padLeft(s string, width int) string {
 
 func (m *model) handleReaderKey(msg tea.KeyMsg) tea.Cmd {
 	key := msg.String()
+	// A completed selection is discarded as soon as the reader moves on, so a
+	// stale range cannot silently capture a later copy or bookmark.
+	if !m.selecting && m.selAnchor.BookID != 0 && isReaderMove(key) {
+		m.clearSelection()
+	}
+	cmd := m.readerKey(msg)
+	if m.selecting && isReaderMove(key) {
+		m.extendSelection()
+	}
+	return cmd
+}
+
+// isReaderMove reports whether a key changes the reading position.
+func isReaderMove(key string) bool {
+	switch key {
+	case "j", "k", "down", "up", "g", "G", "home", "end", " ", "pgdown", "pgup", "ctrl+d", "ctrl+u",
+		"h", "l", "left", "right", "[", "]", "{", "}":
+		return true
+	}
+	return false
+}
+
+func (m *model) readerKey(msg tea.KeyMsg) tea.Cmd {
+	key := msg.String()
 	maxVerse := m.readerMaxVerse()
 	contentW := m.readerContentWidth()
 	avail := m.readerBodyHeight()
@@ -265,8 +307,23 @@ func (m *model) handleReaderKey(msg tea.KeyMsg) tea.Cmd {
 		return m.toggleBookmark()
 	case "n":
 		return m.beginNote()
+	case "V":
+		switch {
+		case m.selecting:
+			m.endSelection()
+		case m.selAnchor.BookID != 0:
+			m.clearSelection()
+			m.setStatus("Selection cleared", false)
+		default:
+			m.beginSelection()
+		}
+		return nil
 	case "i":
 		return m.runCommand("footnotes")
+	case "s":
+		return m.runCommand("strongs")
+	case "K":
+		return m.runCommand("strongs-entry")
 	case "v":
 		return m.runCommand("numbers")
 	case "ctrl+b":
@@ -276,6 +333,8 @@ func (m *model) handleReaderKey(msg tea.KeyMsg) tea.Cmd {
 		return m.focusSearch()
 	case "L":
 		return m.runCommand("library")
+	case "T":
+		return m.runCommand("translations")
 	case "?":
 		m.help = true
 		m.helpScroll = 0
@@ -284,6 +343,11 @@ func (m *model) handleReaderKey(msg tea.KeyMsg) tea.Cmd {
 		m.openPalette()
 		return nil
 	case "esc":
+		if m.selecting || m.selAnchor.BookID != 0 {
+			m.clearSelection()
+			m.setStatus("Selection cancelled", false)
+			return nil
+		}
 		return m.runCommand("home")
 	}
 	return nil
@@ -367,6 +431,13 @@ func (m *model) readerSidebar(width, height int) []string {
 		}
 	}
 
+	if m.showStrongs {
+		if v := m.bible.VerseAt(m.reader.bookID, m.reader.chapter, uint16(max(1, m.reader.verse))); v != nil {
+			lines = append(lines, "")
+			lines = append(lines, m.strongsSummary(v, width)...)
+		}
+	}
+
 	snap := m.store.Snapshot()
 	var marks []string
 	for _, it := range snap.Bookmarks {
@@ -428,11 +499,13 @@ func (m *model) readerView() string {
 		block = strings.Join(joined, "\n")
 	}
 
-	hints := actionHints(m.width) + " · j/k verse · [/] chapter · i notes · v numbers · / search · ? help"
-	if m.width >= 150 {
-		hints = "j/k verse · [/] chapter · {/} book · Space page · " + actionHints(m.width) + " · i notes & footnotes · v numbers · / search · L library · ? help · Esc home"
+	hints := actionHints(m.width) + " · j/k verse · V select · [/] chapter · i notes · / search · ? help"
+	if m.selecting {
+		hints = "PASSAGE SELECTED · j/k extend · [/] next chapter · y copy · V finish · Esc cancel"
+	} else if m.width >= 150 {
+		hints = "j/k verse · V select · [/] chapter · {/} book · Space page · " + actionHints(m.width) + " · i notes & footnotes · v numbers · / search · L library · ? help · Esc home"
 	} else if m.width < 100 {
-		hints = actionHints(m.width) + " · j/k verse · [/] chapter · i notes · ? help"
+		hints = actionHints(m.width) + " · j/k verse · V select · i notes · ? help"
 	}
 	return header + "\n" + nav + "\n\n" + block + "\n" + m.footer(hints)
 }

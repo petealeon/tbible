@@ -3,11 +3,13 @@
 package main
 
 import (
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/petealeon/tbible/v2/internal/corpus"
 	"github.com/petealeon/tbible/v2/internal/search"
+	"github.com/petealeon/tbible/v2/internal/strongs"
 	"github.com/petealeon/tbible/v2/internal/usfm"
 )
 
@@ -24,6 +27,9 @@ func main() {
 		corpusOut  = flag.String("corpus", "internal/embedded/data/kjv.tbc", "binary corpus output")
 		indexOut   = flag.String("index", "internal/embedded/data/kjv.tbi", "search index output")
 		jsonOut    = flag.String("json", "legacy/v1/data/kjv.json", "legacy KJV JSON output")
+		tbesh      = flag.String("tbesh", "data/lexicons/tbesh.txt.gz", "STEPBible Hebrew lexicon (.txt or .txt.gz)")
+		tbesg      = flag.String("tbesg", "data/lexicons/tbesg.txt.gz", "STEPBible Greek lexicon (.txt or .txt.gz)")
+		strongsOut = flag.String("strongs", "internal/embedded/data/strongs.json.gz", "Strong's dictionary output")
 		verifyOnly = flag.Bool("verify", false, "validate only; do not write files")
 		quiet      = flag.Bool("quiet", false, "suppress detail")
 	)
@@ -50,8 +56,20 @@ func main() {
 		fmt.Printf("corpus: %d books, %d chapters, %d verses\n", len(b.Books), len(b.Chapters), len(b.Verses))
 	}
 
+	dict, err := buildStrongs(*tbesh, *tbesg)
+	if err != nil {
+		fatal(err)
+	}
+	tagged, tags, err := verifyStrongs(b, dict)
+	if err != nil {
+		fatal(err)
+	}
+	if !*quiet {
+		fmt.Printf("strongs: %d headwords, %d tags across %d verses\n", dict.Len(), tags, tagged)
+	}
+
 	if *verifyOnly {
-		fmt.Println("verified: canonical KJV")
+		fmt.Println("verified: canonical KJV, Strong's coverage")
 		return
 	}
 
@@ -100,6 +118,28 @@ func main() {
 		fatal(fmt.Errorf("index round-trip: %w", err))
 	}
 
+	if err := writeAtomic(*strongsOut+".tmp", *strongsOut, func(f *os.File) error {
+		n, err := dict.WriteTo(f)
+		if err == nil && !*quiet {
+			fmt.Printf("strongs written: %s (%d headwords)\n", *strongsOut, n)
+		}
+		return err
+	}); err != nil {
+		fatal(err)
+	}
+	strongBlob, err := os.Open(*strongsOut)
+	if err != nil {
+		fatal(err)
+	}
+	checkDict, err := strongs.Parse(strongBlob)
+	strongBlob.Close()
+	if err != nil {
+		fatal(fmt.Errorf("strongs round-trip: %w", err))
+	}
+	if checkDict.Len() != dict.Len() {
+		fatal(fmt.Errorf("strongs round-trip: %d headwords, want %d", checkDict.Len(), dict.Len()))
+	}
+
 	if err := writeJSON(*jsonOut, b); err != nil {
 		fatal(err)
 	}
@@ -112,6 +152,72 @@ func main() {
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "tbgen:", err)
 	os.Exit(1)
+}
+
+// buildStrongs reads the STEPBible lexicons and folds them into one
+// dictionary. Sources may be plain text or gzip-compressed.
+func buildStrongs(hebrewPath, greekPath string) (*strongs.Dictionary, error) {
+	hr, closeH, err := openText(hebrewPath)
+	if err != nil {
+		return nil, err
+	}
+	defer closeH()
+	gr, closeG, err := openText(greekPath)
+	if err != nil {
+		return nil, err
+	}
+	defer closeG()
+	return strongs.Build(hr, gr)
+}
+
+func openText(path string) (io.Reader, func(), error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	var magic [2]byte
+	if _, err := io.ReadFull(f, magic[:]); err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	if magic[0] == 0x1f && magic[1] == 0x8b {
+		zr, err := gzip.NewReader(f)
+		if err != nil {
+			f.Close()
+			return nil, nil, err
+		}
+		return zr, func() { zr.Close(); f.Close() }, nil
+	}
+	return f, func() { f.Close() }, nil
+}
+
+// verifyStrongs checks that every tagged word resolves to a lexicon headword
+// and reports how many verses and tags were seen.
+func verifyStrongs(b *corpus.Bible, dict *strongs.Dictionary) (verses, tags int, err error) {
+	for i := range b.Verses {
+		v := &b.Verses[i]
+		list := v.Strongs()
+		if len(list) == 0 {
+			continue
+		}
+		verses++
+		tags += len(list)
+		for _, s := range list {
+			if _, ok := dict.Lookup(s.Greek, s.Number); !ok {
+				bk := b.BookByID(v.BookID)
+				name := "?"
+				if bk != nil {
+					name = bk.Name
+				}
+				return 0, 0, fmt.Errorf("missing lexicon entry %s at %s %d:%d", s.Tag(), name, v.Chapter, v.Number)
+			}
+		}
+	}
+	return verses, tags, nil
 }
 
 func writeAtomic(tmp, final string, fn func(*os.File) error) error {

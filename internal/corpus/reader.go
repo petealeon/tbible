@@ -62,6 +62,7 @@ func open(data []byte, borrow bool) (*Bible, error) {
 		{"spans", int(binary.LittleEndian.Uint32(data[44:48])), int(binary.LittleEndian.Uint32(data[48:52])), spanRecordSize, 0},
 		{"notes", int(binary.LittleEndian.Uint32(data[52:56])), int(binary.LittleEndian.Uint32(data[56:60])), noteRecordSize, 0},
 		{"headings", int(binary.LittleEndian.Uint32(data[60:64])), int(binary.LittleEndian.Uint32(data[64:68])), headingRecordSize, 0},
+		{"strongs", int(binary.LittleEndian.Uint32(data[68:72])), int(binary.LittleEndian.Uint32(data[72:76])), strongRecordSize, 0},
 	}
 	// The string blob follows the header and is not addressed by a separate
 	// offset field: every section offset is absolute.
@@ -132,9 +133,12 @@ func open(data []byte, borrow bool) (*Bible, error) {
 	spanSec := data[sections[3].off : sections[3].off+sections[3].size]
 	noteSec := data[sections[4].off : sections[4].off+sections[4].size]
 	headSec := data[sections[5].off : sections[5].off+sections[5].size]
+	strongSec := data[sections[6].off : sections[6].off+sections[6].size]
 
 	// First pass: validate record ranges and size the flat decoration arrays.
-	type decorCounts struct{ italics, red, notes, headings int }
+	type decorCounts struct {
+		italics, red, notes, headings, strongs int
+	}
 	counts := make([]decorCounts, verseCount)
 	var total decorCounts
 	for i := 0; i < verseCount; i++ {
@@ -144,15 +148,18 @@ func open(data []byte, borrow bool) (*Bible, error) {
 			red:      int(binary.LittleEndian.Uint16(r[26:28])),
 			notes:    int(binary.LittleEndian.Uint16(r[32:34])),
 			headings: int(binary.LittleEndian.Uint16(r[38:40])),
+			strongs:  int(binary.LittleEndian.Uint16(r[44:46])),
 		}
 		io := int(binary.LittleEndian.Uint32(r[16:20]))
 		ro := int(binary.LittleEndian.Uint32(r[22:26]))
 		no := int(binary.LittleEndian.Uint32(r[28:32]))
 		ho := int(binary.LittleEndian.Uint32(r[34:38]))
+		so := int(binary.LittleEndian.Uint32(r[40:44]))
 		if !withinRecords(io, c.italics, spanRecordSize, len(spanSec)) ||
 			!withinRecords(ro, c.red, spanRecordSize, len(spanSec)) ||
 			!withinRecords(no, c.notes, noteRecordSize, len(noteSec)) ||
-			!withinRecords(ho, c.headings, headingRecordSize, len(headSec)) {
+			!withinRecords(ho, c.headings, headingRecordSize, len(headSec)) ||
+			!withinRecords(so, c.strongs, strongRecordSize, len(strongSec)) {
 			return nil, fmt.Errorf("corpus: verse %d decorations out of range", i)
 		}
 		counts[i] = c
@@ -160,6 +167,7 @@ func open(data []byte, borrow bool) (*Bible, error) {
 		total.red += c.red
 		total.notes += c.notes
 		total.headings += c.headings
+		total.strongs += c.strongs
 	}
 	if total.italics > 0xffff || total.red > 0xffff || total.notes > 0xffff || total.headings > 0xffff {
 		return nil, fmt.Errorf("corpus: too many decoration records")
@@ -169,11 +177,12 @@ func open(data []byte, borrow bool) (*Bible, error) {
 		redLetter: make([]Span, total.red),
 		notes:     make([]Note, total.notes),
 		headings:  make([]Heading, total.headings),
+		strongs:   make([]StrongSpan, total.strongs),
 	}
 	b.decorBuilt = true
 
 	// Second pass: decode into the flat arrays and point each verse at its slice.
-	var oi, or, on, oh int
+	var oi, or, on, oh, os int
 	for i := 0; i < verseCount; i++ {
 		r := verseSec[i*verseRecordSize:]
 		v := &b.Verses[i]
@@ -192,6 +201,7 @@ func open(data []byte, borrow bool) (*Bible, error) {
 		v.redOff, v.redLen = uint16(or), uint16(c.red)
 		v.noteOff, v.noteLen = uint16(on), uint16(c.notes)
 		v.headOff, v.headLen = uint16(oh), uint16(c.headings)
+		v.strongOff, v.strongLen = uint32(os), uint16(c.strongs)
 
 		if err := readSpansInto(spanSec, int(binary.LittleEndian.Uint32(r[16:20])), c.italics, len(v.Text), b.decor.italics[oi:oi+c.italics]); err != nil {
 			return nil, fmt.Errorf("corpus: verse %d italics: %w", i, err)
@@ -224,10 +234,26 @@ func open(data []byte, borrow bool) (*Bible, error) {
 			}
 			b.decor.headings[oh+j] = Heading{Text: text, Kind: kind}
 		}
+		soff := int(binary.LittleEndian.Uint32(r[40:44]))
+		for j := 0; j < c.strongs; j++ {
+			sr := strongSec[soff+j*strongRecordSize:]
+			start := int(binary.LittleEndian.Uint16(sr[0:2]))
+			end := int(binary.LittleEndian.Uint16(sr[2:4]))
+			if start < 0 || end <= start || end > len(v.Text) {
+				return nil, fmt.Errorf("corpus: verse %d Strong's span out of bounds", i)
+			}
+			b.decor.strongs[os+j] = StrongSpan{
+				Start:  start,
+				End:    end,
+				Number: binary.LittleEndian.Uint16(sr[6:8]),
+				Greek:  sr[4] == 1,
+			}
+		}
 		oi += c.italics
 		or += c.red
 		on += c.notes
 		oh += c.headings
+		os += c.strongs
 	}
 
 	if err := b.Validate(); err != nil {

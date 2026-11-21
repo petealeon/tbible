@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -28,8 +29,39 @@ import (
 	"github.com/petealeon/tbible/v2/internal/corpus"
 )
 
+// parseConfig collects optional source normalisations for non-KJV editions.
+type parseConfig struct {
+	canonicalOnly bool
+	webRomans     bool
+}
+
+// Option customises USFM parsing for downloadable translations.
+type Option func(*parseConfig)
+
+// CanonicalOnly skips extra USFM books such as the Apocrypha, which eBible
+// includes in some otherwise canonical zip files.
+func CanonicalOnly() Option {
+	return func(c *parseConfig) { c.canonicalOnly = true }
+}
+
+// WebRomans applies the World English Bible numbering convention: the three
+// verses printed at Romans 14:24-26 belong at 16:25-27, and a footnote-only
+// verse at 16:25 is dropped.
+func WebRomans() Option {
+	return func(c *parseConfig) { c.webRomans = true }
+}
+
 // ParseZip reads a USFM source zip and returns the assembled Bible.
 func ParseZip(filename string) (*corpus.Bible, error) {
+	return ParseZipWith(filename)
+}
+
+// ParseZipWith reads a USFM source zip with optional source normalisations.
+func ParseZipWith(filename string, opts ...Option) (*corpus.Bible, error) {
+	var cfg parseConfig
+	for _, apply := range opts {
+		apply(&cfg)
+	}
 	zr, err := zip.OpenReader(filename)
 	if err != nil {
 		return nil, err
@@ -41,7 +73,10 @@ func ParseZip(filename string) (*corpus.Bible, error) {
 		if !strings.HasSuffix(strings.ToLower(f.Name), ".usfm") {
 			continue
 		}
-		pb, err := parseBookFile(f)
+		if cfg.canonicalOnly && !canonicalUSFMFile(f) {
+			continue
+		}
+		pb, err := parseBookFile(f, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path.Base(f.Name), err)
 		}
@@ -112,16 +147,36 @@ type bookParser struct {
 	decorations     []corpus.VerseDecorations
 }
 
-func parseBookFile(f *zip.File) (*parsedBook, error) {
+// canonicalUSFMFile reports whether a USFM file's \id is one of the 66
+// canonical books. eBible's WEB archive also contains the Apocrypha.
+func canonicalUSFMFile(f *zip.File) bool {
+	rc, err := f.Open()
+	if err != nil {
+		return false
+	}
+	defer rc.Close()
+	sc := bufio.NewScanner(io.LimitReader(rc, 16<<10))
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if !strings.HasPrefix(line, `\id `) {
+			continue
+		}
+		fields := strings.Fields(line)
+		return len(fields) > 1 && corpus.BookByUSFM(fields[1]) != nil
+	}
+	return false
+}
+
+func parseBookFile(f *zip.File, cfg parseConfig) (*parsedBook, error) {
 	rc, err := f.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer rc.Close()
-	return parseBook(rc)
+	return parseBook(rc, cfg)
 }
 
-func parseBook(r io.Reader) (*parsedBook, error) {
+func parseBook(r io.Reader, cfg parseConfig) (*parsedBook, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
 
@@ -172,7 +227,7 @@ func parseBook(r io.Reader) (*parsedBook, error) {
 			}
 			ip := newInlineParser()
 			ip.parseSegment(text, false, false)
-			text, italics, red, notes := ip.result()
+			text, italics, red, notes, strongs := ip.result()
 			if ip.paragraph {
 				bp.pendingFlags |= corpus.FlagParagraph
 			}
@@ -187,6 +242,7 @@ func parseBook(r io.Reader) (*parsedBook, error) {
 				RedLetter: red,
 				Notes:     notes,
 				Headings:  bp.pendingHeadings,
+				Strongs:   strongs,
 			})
 			bp.pendingFlags = 0
 			bp.pendingHeadings = nil
@@ -224,6 +280,9 @@ func parseBook(r io.Reader) (*parsedBook, error) {
 	}
 	if len(bp.verses) == 0 {
 		return nil, fmt.Errorf("no verses")
+	}
+	if cfg.webRomans && bp.info.ID == 45 {
+		normaliseWebRomans(bp)
 	}
 	pb := &parsedBook{Info: bp.info, Decorations: bp.decorations}
 	first := 0
@@ -265,6 +324,39 @@ func parseBook(r io.Reader) (*parsedBook, error) {
 	return pb, nil
 }
 
+// normaliseWebRomans moves WEB/WMB Romans 14:24-26 to 16:25-27 and removes
+// the footnote-only placeholder that those editions print as 16:25. Verses and
+// their decorations are reordered as pairs so italics and notes stay aligned.
+func normaliseWebRomans(bp *bookParser) {
+	type item struct {
+		verse corpus.Verse
+		dec   corpus.VerseDecorations
+	}
+	var items []item
+	for i, v := range bp.verses {
+		if v.Chapter == 16 && v.Number == 25 && strings.TrimSpace(v.Text) == "" {
+			continue
+		}
+		if v.Chapter == 14 && v.Number >= 24 && v.Number <= 26 {
+			v.Chapter = 16
+			v.Number += 1
+		}
+		items = append(items, item{verse: v, dec: bp.decorations[i]})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].verse.Chapter != items[j].verse.Chapter {
+			return items[i].verse.Chapter < items[j].verse.Chapter
+		}
+		return items[i].verse.Number < items[j].verse.Number
+	})
+	bp.verses = bp.verses[:0]
+	bp.decorations = bp.decorations[:0]
+	for _, it := range items {
+		bp.verses = append(bp.verses, it.verse)
+		bp.decorations = append(bp.decorations, it.dec)
+	}
+}
+
 func splitMarker(line string) (string, string) {
 	s := line[1:]
 	i := 0
@@ -297,15 +389,40 @@ type inlineParser struct {
 	italics      []corpus.Span
 	red          []corpus.Span
 	notes        []corpus.Note
+	strongs      []corpus.StrongSpan
 	pendingSpace bool
 	paragraph    bool
 }
 
 func newInlineParser() *inlineParser { return &inlineParser{} }
 
-func (p *inlineParser) result() (string, []corpus.Span, []corpus.Span, []corpus.Note) {
+func (p *inlineParser) result() (string, []corpus.Span, []corpus.Span, []corpus.Note, []corpus.StrongSpan) {
 	text := string(p.out)
-	return text, trimSpans(p.italics, text), trimSpans(p.red, text), p.notes
+	return text, trimSpans(p.italics, text), trimSpans(p.red, text), p.notes, trimStrongs(p.strongs, text)
+}
+
+// trimStrongs drops Strong's spans that become empty after whitespace
+// normalisation and trims spaces from the ends of the rest.
+func trimStrongs(spans []corpus.StrongSpan, text string) []corpus.StrongSpan {
+	out := spans[:0]
+	for _, s := range spans {
+		if s.Start < 0 {
+			s.Start = 0
+		}
+		if s.End > len(text) {
+			s.End = len(text)
+		}
+		for s.Start < s.End && text[s.Start] == ' ' {
+			s.Start++
+		}
+		for s.End > s.Start && text[s.End-1] == ' ' {
+			s.End--
+		}
+		if s.End > s.Start {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func trimSpans(spans []corpus.Span, text string) []corpus.Span {
@@ -369,10 +486,17 @@ func (p *inlineParser) parseSegment(s string, italic, red bool) {
 		switch marker {
 		case "w", "+w":
 			content, after := markerContent(s, i, marker)
+			word, attrs := content, ""
 			if k := strings.IndexByte(content, '|'); k >= 0 {
-				content = content[:k]
+				word, attrs = content[:k], content[k+1:]
 			}
-			p.parseSegment(content, italic, red)
+			start := len(p.out)
+			p.parseSegment(word, italic, red)
+			if num, greek, ok := parseStrong(attrs); ok {
+				p.strongs = append(p.strongs, corpus.StrongSpan{
+					Start: start, End: len(p.out), Number: num, Greek: greek,
+				})
+			}
 			i = after
 		case "add", "+add":
 			content, after := markerContent(s, i, marker)
@@ -458,6 +582,57 @@ func markerContent(s string, from int, marker string) (string, int) {
 	return s[from:], len(s)
 }
 
+// parseStrong extracts the primary Strong's number from a \w attribute list.
+// eBible attributes look like `strong="H7225"`; extended numbers such as
+// `H7225G` and multi-number values are reduced to their base number because
+// the bundled lexicons are keyed by the base.
+func parseStrong(attrs string) (uint16, bool, bool) {
+	k := strings.Index(attrs, "strong=")
+	if k < 0 {
+		return 0, false, false
+	}
+	v := strings.TrimLeft(attrs[k+len("strong="):], " \t")
+	if v == "" {
+		return 0, false, false
+	}
+	if v[0] == '"' || v[0] == '\'' {
+		quote := v[0]
+		v = v[1:]
+		if e := strings.IndexByte(v, quote); e >= 0 {
+			v = v[:e]
+		}
+	} else if e := strings.IndexAny(v, " \t|"); e >= 0 {
+		v = v[:e]
+	}
+	if e := strings.IndexAny(v, ", "); e >= 0 {
+		v = v[:e]
+	}
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0, false, false
+	}
+	greek := false
+	switch v[0] {
+	case 'H', 'h':
+	case 'G', 'g':
+		greek = true
+	default:
+		return 0, false, false
+	}
+	v = v[1:]
+	for len(v) > 0 && (v[len(v)-1] < '0' || v[len(v)-1] > '9') {
+		v = v[:len(v)-1]
+	}
+	if v == "" {
+		return 0, false, false
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 || n > 65535 {
+		return 0, false, false
+	}
+	return uint16(n), greek, true
+}
+
 func extractNote(content string) string {
 	content = strings.TrimSpace(content)
 	content = strings.TrimPrefix(content, "+")
@@ -501,6 +676,6 @@ func stripMarkers(s string) string {
 func plainInline(s string) string {
 	p := newInlineParser()
 	p.parseSegment(s, false, false)
-	text, _, _, _ := p.result()
+	text, _, _, _, _ := p.result()
 	return text
 }

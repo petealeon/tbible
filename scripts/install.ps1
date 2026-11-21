@@ -1,5 +1,5 @@
 param(
-  [string]$Version = "2.0.0",
+  [string]$Version = "2.1.0",
   [string]$InstallDir = "$env:LOCALAPPDATA\Programs\tbible",
   [string]$BaseUri = "",
   [switch]$Source,

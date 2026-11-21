@@ -1,7 +1,7 @@
-VERSION ?= 2.0.0
+VERSION ?= 2.1.0
 LDFLAGS := -s -w -X github.com/petealeon/tbible/v2/internal/version.Version=$(VERSION)
 
-.PHONY: all build windows test vet race tidy gen verify dist install clean
+.PHONY: all build windows test vet race tidy gen verify packs dist install clean
 
 all: build
 
@@ -28,6 +28,10 @@ gen:
 
 verify:
 	go run ./cmd/tbgen --verify
+
+# Build the data-only translation packs and their catalog.
+packs:
+	go run ./cmd/tbpack
 
 # Build release archives and a checksum manifest under dist/.
 dist:

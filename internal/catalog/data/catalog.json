@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "updated": "2026-11-21",
+  "source": "https://github.com/petealeon/tbible/releases/download/packs-v1/catalog.json",
+  "translations": [
+    {
+      "id": "asv",
+      "name": "American Standard Version",
+      "language": "English",
+      "description": "Public domain (1901)",
+      "license": "Public domain (1901)",
+      "source": "https://ebible.org/eng-asv",
+      "url": "https://github.com/petealeon/tbible/releases/download/packs-v1/asv.tbp",
+      "sha256": "bb2c196c4d6881c67cd1f46b40406d51b7355a1e4100c9e29497ea7cd30b3782",
+      "size": 4598610,
+      "built": "2026-11-21"
+    },
+    {
+      "id": "web",
+      "name": "World English Bible",
+      "language": "English",
+      "description": "Public domain",
+      "license": "Public domain",
+      "source": "https://ebible.org/eng-web",
+      "url": "https://github.com/petealeon/tbible/releases/download/packs-v1/web.tbp",
+      "sha256": "f1b9fae6040593a6bc892972c1d2d190fe67e3214d7d7c35fcfff62a851e8602",
+      "size": 4244625,
+      "built": "2026-11-21"
+    },
+    {
+      "id": "wmb",
+      "name": "World Messianic Bible",
+      "language": "English",
+      "description": "Public domain",
+      "license": "Public domain",
+      "source": "https://ebible.org/engwmb",
+      "url": "https://github.com/petealeon/tbible/releases/download/packs-v1/wmb.tbp",
+      "sha256": "626b2b32fa35a9ecf2ea7efe702ff20dbfc046553ef27496646b5fb90e4068dc",
+      "size": 4255488,
+      "built": "2026-11-21"
+    },
+    {
+      "id": "ylt",
+      "name": "Young's Literal Translation",
+      "language": "English",
+      "description": "Public domain (1898)",
+      "license": "Public domain (1898)",
+      "source": "https://ebible.org/engylt",
+      "url": "https://github.com/petealeon/tbible/releases/download/packs-v1/ylt.tbp",
+      "sha256": "b2ab6c1ec45d3d7fe888c53528daaef05e497842ad8e5f0c2f48c0c99df1eb45",
+      "size": 2248792,
+      "built": "2026-11-21"
+    }
+  ]
+}
