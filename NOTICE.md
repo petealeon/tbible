@@ -29,8 +29,9 @@ needed for the TUI. The short codes and lexical meaning are preserved.
 ## Downloadable translations
 
 The optional `.tbp` packs are built from public-domain eBible.org USFM
-editions. Their exact SHA-256 hashes are recorded in
-`internal/catalog/data/catalog.json`.
+editions. ASV, WEB, and WMB source files also carry Strong's word tags; those
+tags are reproduced as supplied and may be approximate. Their exact SHA-256
+hashes are recorded in `internal/catalog/data/catalog.json`.
 
 | ID | Translation | Source | Notes |
 | --- | --- | --- | --- |

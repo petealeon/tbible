@@ -65,7 +65,7 @@ var commandDefs = []commandDef{
 	{"palette", "Command palette", "Run any action by name", "Ctrl-P"},
 	{"numbers", "Toggle verse numbers", "Show or hide verse numbers", "v"},
 	{"footnotes", "Toggle notes and footnotes", "Show or hide your notes and translation footnotes", "i"},
-	{"strongs", "Toggle Strong's numbers", "Show or hide inline Strong's tags (KJV corpus)", "s"},
+	{"strongs", "Toggle Strong's numbers", "Show or hide corpus-supplied inline Strong's tags", "s"},
 	{"strongs-next", "Next Strong's word", "Highlight the next tagged word in the focused verse", "w"},
 	{"strongs-prev", "Previous Strong's word", "Highlight the previous tagged word in the focused verse", "W"},
 	{"strongs-entry", "Strong's dictionary", "Open the focused Strong's entry", "K"},

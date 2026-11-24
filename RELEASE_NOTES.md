@@ -1,3 +1,18 @@
+# tbible 2.1.2
+
+This patch clarifies how Strong's tags work in downloadable translations. No
+data format, pack, or catalog changed.
+
+- README, help, and the command palette now say Strong's tags are
+  corpus-supplied instead of describing them as KJV-only.
+- Corrected the offline-bundle download examples to use the current release's
+  asset filenames.
+- ASV, WEB, and WMB really do include Strong's spans from their eBible USFM
+  sources. Those tags are reproduced as supplied and may be approximate; the
+  embedded KJV remains the curated set recommended for word studies.
+- Pack generation now fails if a source expected to carry Strong's spans
+  produces a pack without them, and reports the span count for every pack.
+
 # tbible 2.1.1
 
 This patch improves Strong's presentation and keyboard selection. It does not

@@ -5,7 +5,7 @@
 - The current source tree is v2. The Go module remains
   `github.com/petealeon/tbible/v2`.
 - v1 is preserved in `legacy/v1/` and on the `v1` branch with tag `v1.0.0`.
-- Application releases use tags `vX.Y.Z`. v2.1 is tagged `v2.1.1`.
+- Application releases use tags `vX.Y.Z`. v2.1 is tagged `v2.1.2`.
 - Translation packs are versioned independently under the `packs-v1` tag. Pack
   IDs and URLs are recorded in the committed catalog.
 
@@ -38,9 +38,9 @@
 ## Building assets
 
 ```sh
-make dist VERSION=2.1.1
+make dist VERSION=2.1.2
 cd dist
-sha256sum -c tbible-2.1.1-checksums.txt
+sha256sum -c tbible-2.1.2-checksums.txt
 ```
 
 `scripts/dist.sh` produces:
@@ -49,7 +49,7 @@ sha256sum -c tbible-2.1.1-checksums.txt
 - one `*-offline.tar.gz` or `*-offline.zip` per platform containing the
   executable, catalog, and all four translation packs;
 - the standalone `.tbp` files and `catalog.json` for the `packs-v1` release;
-- `tbible-2.1.1-checksums.txt` covering every asset.
+- `tbible-2.1.2-checksums.txt` covering every asset.
 
 All release builds set `CGO_ENABLED=0`, use `-trimpath`, and inject the version
 with `-ldflags`.
@@ -59,10 +59,10 @@ with `-ldflags`.
 Publish the application release first so installer URLs resolve:
 
 ```sh
-gh release create v2.1.1 \
-  dist/tbible-2.1.1-* \
-  dist/tbible-2.1.1-checksums.txt \
-  --title "tbible 2.1.1" \
+gh release create v2.1.2 \
+  dist/tbible-2.1.2-* \
+  dist/tbible-2.1.2-checksums.txt \
+  --title "tbible 2.1.2" \
   --notes-file RELEASE_NOTES.md
 ```
 

@@ -26,13 +26,14 @@ const (
 )
 
 type source struct {
-	id        string
-	name      string
-	zip       string
-	url       string
-	sourceURL string
-	license   string
-	webRomans bool
+	id          string
+	name        string
+	zip         string
+	url         string
+	sourceURL   string
+	license     string
+	webRomans   bool
+	wantStrongs bool
 }
 
 var sources = []source{
@@ -40,12 +41,14 @@ var sources = []source{
 		id: "asv", name: "American Standard Version", zip: "eng-asv_usfm.zip",
 		url:       "https://ebible.org/Scriptures/eng-asv_usfm.zip",
 		sourceURL: "https://ebible.org/eng-asv", license: "Public domain (1901)",
+		wantStrongs: true,
 	},
 	{
 		id: "web", name: "World English Bible", zip: "eng-web_usfm.zip",
 		url:       "https://ebible.org/Scriptures/eng-web_usfm.zip",
 		sourceURL: "https://ebible.org/eng-web", license: "Public domain",
-		webRomans: true,
+		webRomans:   true,
+		wantStrongs: true,
 	},
 	{
 		id: "ylt", name: "Young's Literal Translation", zip: "engylt_usfm.zip",
@@ -56,7 +59,8 @@ var sources = []source{
 		id: "wmb", name: "World Messianic Bible", zip: "engwmb_usfm.zip",
 		url:       "https://ebible.org/Scriptures/engwmb_usfm.zip",
 		sourceURL: "https://ebible.org/engwmb", license: "Public domain",
-		webRomans: true,
+		webRomans:   true,
+		wantStrongs: true,
 	},
 }
 
@@ -154,14 +158,18 @@ func buildPack(s source, srcDir, outDir, updated string) (catalogpkg.Entry, erro
 	if err := checkIndex.CheckCorpus(checkBible); err != nil {
 		return catalogpkg.Entry{}, err
 	}
+	strongs := countStrongSpans(checkBible)
+	if s.wantStrongs && strongs == 0 {
+		return catalogpkg.Entry{}, fmt.Errorf("%s pack has no Strong's spans from its source", s.id)
+	}
 
 	dst := filepath.Join(outDir, s.id+packs.Extension)
 	if err := writeAtomic(dst+".tmp", dst, packBuf.Bytes()); err != nil {
 		return catalogpkg.Entry{}, err
 	}
 	sum := sha256.Sum256(packBuf.Bytes())
-	fmt.Printf("%-4s %-28s %6d verses  %6.1f MB  sha256 %s\n",
-		s.id, s.name, len(checkBible.Verses), float64(len(packBuf.Bytes()))/(1<<20), hex.EncodeToString(sum[:]))
+	fmt.Printf("%-4s %-28s %6d verses  %6d strongs  %6.1f MB  sha256 %s\n",
+		s.id, s.name, len(checkBible.Verses), strongs, float64(len(packBuf.Bytes()))/(1<<20), hex.EncodeToString(sum[:]))
 
 	return catalogpkg.Entry{
 		ID: s.id, Name: s.name, Language: "English",
@@ -173,6 +181,14 @@ func buildPack(s source, srcDir, outDir, updated string) (catalogpkg.Entry, erro
 		Size:        int64(len(packBuf.Bytes())),
 		Built:       updated,
 	}, nil
+}
+
+func countStrongSpans(b *corpus.Bible) int {
+	n := 0
+	for i := range b.Verses {
+		n += len(b.Verses[i].Strongs())
+	}
+	return n
 }
 
 func writeAtomic(tmp, dst string, data []byte) error {

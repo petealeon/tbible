@@ -1,4 +1,4 @@
-VERSION ?= 2.1.1
+VERSION ?= 2.1.2
 LDFLAGS := -s -w -X github.com/petealeon/tbible/v2/internal/version.Version=$(VERSION)
 
 .PHONY: all build windows test vet race tidy gen verify packs dist install clean

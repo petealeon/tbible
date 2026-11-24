@@ -32,8 +32,11 @@ The canonical counts and the corpus hash are checked by `cmd/tbgen --verify`.
 
 ## Downloadable translations
 
-All packs come from public-domain eBible.org USFM archives and contain text
-plus an index only.
+All packs come from public-domain eBible.org USFM archives and contain text, an
+index, and any decorations present in the source. ASV, WEB, and WMB USFM files
+carry source-supplied Strong's word tags, which are reproduced in their packs;
+those tags can be approximate. YLT has no source Strong's tags. The embedded KJV
+uses its own curated tag set and is the recommended corpus for word studies.
 
 | ID | eBible ID | Name | Source note |
 | --- | --- | --- | --- |
@@ -52,8 +55,9 @@ at 16:25. The normalisation moves the three verses and drops the placeholder so
 all packs share the canonical 16-chapter Romans structure.
 
 Every generated pack is decoded again, checked with `Index.CheckCorpus`, and
-its SHA-256 is written to the embedded catalog. Pack generation is expected to
-be deterministic for a fixed source and date.
+its SHA-256 is written to the embedded catalog. `cmd/tbpack` also fails if a
+source that is expected to carry Strong's spans produces a pack without them.
+Pack generation is expected to be deterministic for a fixed source and date.
 
 ## Deliberately excluded
 
