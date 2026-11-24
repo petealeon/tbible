@@ -104,15 +104,18 @@ type model struct {
 	selHead         ref.Reference
 	heatReturnFocus bool
 
-	// Strong's overlay state. spans belong to the verse the overlay was
-	// opened from; j/k walks through them.
-	strongsOpen   bool
-	strongsDict   *strongs.Dictionary
-	strongsSpans  []corpus.StrongSpan
-	strongsText   string
-	strongsVerse  string
-	strongsIndex  int
-	strongsScroll int
+	// Strong's state. strongsFocus is the tagged word highlighted inline in
+	// the focused verse; strongsIndex is the position inside the full-screen
+	// overlay, which starts where the inline focus was.
+	strongsFocus      int
+	strongsFocusVerse string
+	strongsOpen       bool
+	strongsDict       *strongs.Dictionary
+	strongsSpans      []corpus.StrongSpan
+	strongsText       string
+	strongsVerse      string
+	strongsIndex      int
+	strongsScroll     int
 }
 
 type copiedMsg struct {
@@ -1048,6 +1051,10 @@ func (m *model) runCommand(id string) tea.Cmd {
 			return nil
 		}
 		return m.openStrongs(r, v)
+	case "strongs-next":
+		return m.moveStrongsFocus(1)
+	case "strongs-prev":
+		return m.moveStrongsFocus(-1)
 	case "sidebar":
 		m.sidebar = !m.sidebar
 		return nil

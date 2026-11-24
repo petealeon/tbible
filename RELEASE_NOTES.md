@@ -1,3 +1,19 @@
+# tbible 2.1.1
+
+This patch improves Strong's presentation and keyboard selection. It does not
+change the corpus, pack catalog, or on-disk state, so v2.1.0 users can upgrade
+in place.
+
+- Inline Strong's numbers now appear immediately after the word or phrase they
+  annotate, including when decoration styles or line wraps split a verse.
+- `s` focuses the first tagged word in the current verse. `w` and `W` move that
+  word cursor without moving the verse cursor.
+- `K` opens the dictionary entry for the highlighted word. The full-screen
+  overlay starts at that word, and its `j`/`k` navigation keeps the inline
+  highlight in step.
+- The reader sidebar, search preview, footer hints, help, and command palette
+  follow the focused word instead of always using the first tag.
+
 # tbible 2.1.0
 
 v2.1 adds translation, Strong's, and passage-selection features while keeping

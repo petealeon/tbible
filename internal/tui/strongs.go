@@ -11,23 +11,100 @@ import (
 	"github.com/petealeon/tbible/v2/internal/ref"
 )
 
-// toggleStrongs shows or hides the compact Strong's numbers above tagged words.
+// toggleStrongs shows or hides inline Strong's numbers. When enabled it also
+// focuses the first tagged word in the current verse.
 func (m *model) toggleStrongs() tea.Cmd {
 	m.showStrongs = !m.showStrongs
 	m.reader.showStrongs = m.showStrongs
 	if m.showStrongs {
-		m.setStatus("Strong's numbers on · K opens the dictionary", false)
+		m.ensureDictionary()
+		if spans, _, _, ok := m.focusedStrongs(); ok {
+			m.setStatus(fmt.Sprintf("Strong's on · %d tagged words · w/W move · K dictionary", len(spans)), false)
+		} else {
+			m.setStatus("Strong's on · w/W move · K dictionary", false)
+		}
 	} else {
 		m.setStatus("Strong's numbers off", false)
 	}
 	return m.SaveSettings()
 }
 
-// openStrongs opens the full dictionary entry for the first tagged word in v.
-func (m *model) openStrongs(r ref.Reference, v *corpus.Verse) tea.Cmd {
-	if v == nil || len(v.Strongs()) == 0 {
-		m.setStatus("No Strong's numbers in this verse", true)
+func verseFocusKey(id string, v *corpus.Verse) string {
+	if v == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s|%d:%d:%d", id, v.BookID, v.Chapter, v.Number)
+}
+
+// activeStrongsIndex returns the inline focus for v, resetting it when the
+// focused verse or translation changes.
+func (m *model) activeStrongsIndex(v *corpus.Verse) int {
+	if v == nil {
+		return -1
+	}
+	spans := v.Strongs()
+	if len(spans) == 0 {
+		return -1
+	}
+	key := verseFocusKey(m.translationID, v)
+	if m.strongsFocusVerse != key {
+		m.strongsFocusVerse = key
+		m.strongsFocus = 0
+	}
+	m.strongsFocus = min(max(m.strongsFocus, 0), len(spans)-1)
+	return m.strongsFocus
+}
+
+// focusedStrongs resolves the tagged words for the currently focused verse.
+func (m *model) focusedStrongs() ([]corpus.StrongSpan, int, *corpus.Verse, bool) {
+	_, v, ok := m.focusedVerse()
+	if !ok || len(v.Strongs()) == 0 {
+		return nil, -1, nil, false
+	}
+	return v.Strongs(), m.activeStrongsIndex(v), v, true
+}
+
+func strongWord(v *corpus.Verse, s corpus.StrongSpan) string {
+	if v == nil || s.Start < 0 || s.End <= s.Start || s.End > len(v.Text) {
+		return ""
+	}
+	return v.Text[s.Start:s.End]
+}
+
+// moveStrongsFocus cycles the highlighted tagged word without moving the verse
+// cursor. j/k still move by verse, so word navigation gets its own keys.
+func (m *model) moveStrongsFocus(delta int) tea.Cmd {
+	if !m.showStrongs {
+		m.setStatus("Strong's numbers are off · press s", false)
 		return nil
+	}
+	spans, idx, v, ok := m.focusedStrongs()
+	if !ok {
+		m.setStatus("No Strong's numbers in this verse or translation", false)
+		return nil
+	}
+	if len(spans) == 1 {
+		m.setStatus("Only one tagged word in this verse", false)
+		return nil
+	}
+	next := (idx + delta + len(spans)) % len(spans)
+	m.strongsFocus = next
+	m.strongsFocusVerse = verseFocusKey(m.translationID, v)
+	m.setStatus(fmt.Sprintf("Strong's word %d/%d · K for dictionary", next+1, len(spans)), false)
+	return nil
+}
+
+// openStrongs opens the full dictionary entry for the inline-focused word.
+func (m *model) openStrongs(r ref.Reference, v *corpus.Verse) tea.Cmd {
+	spans, idx, focused, ok := m.focusedStrongs()
+	if ok && focused != nil {
+		v = focused
+	} else {
+		if v == nil || len(v.Strongs()) == 0 {
+			m.setStatus("No Strong's numbers in this verse", true)
+			return nil
+		}
+		spans, idx = v.Strongs(), 0
 	}
 	dict, err := embedded.Strongs()
 	if err != nil {
@@ -35,12 +112,16 @@ func (m *model) openStrongs(r ref.Reference, v *corpus.Verse) tea.Cmd {
 		return nil
 	}
 	m.strongsDict = dict
-	m.strongsSpans = v.Strongs()
+	m.strongsSpans = spans
 	m.strongsText = v.Text
+	r = ref.Reference{BookID: v.BookID, Chapter: v.Chapter, Verse: v.Number}
 	m.strongsVerse = r.Label(m.bible)
-	m.strongsIndex = 0
+	m.strongsIndex = idx
 	m.strongsScroll = 0
 	m.strongsOpen = true
+	// Keep the inline highlight in step with the overlay selection.
+	m.strongsFocus = idx
+	m.strongsFocusVerse = verseFocusKey(m.translationID, v)
 	return nil
 }
 
@@ -55,15 +136,18 @@ func (m *model) strongsEntry() (string, corpus.StrongSpan, bool) {
 	}
 	m.strongsIndex = min(max(m.strongsIndex, 0), len(m.strongsSpans)-1)
 	s := m.strongsSpans[m.strongsIndex]
-	word := ""
-	if s.Start >= 0 && s.End <= len(m.strongsText) {
-		word = m.strongsText[s.Start:s.End]
-	}
+	word := strongWord(&corpus.Verse{Text: m.strongsText}, s)
 	if m.strongsDict == nil {
 		return word, s, false
 	}
 	_, ok := m.strongsDict.Lookup(s.Greek, s.Number)
 	return word, s, ok
+}
+
+func (m *model) setOverlayStrongsIndex(i int) {
+	m.strongsIndex = i
+	m.strongsScroll = 0
+	m.strongsFocus = i
 }
 
 func (m *model) handleStrongsKey(msg tea.KeyMsg) tea.Cmd {
@@ -73,14 +157,12 @@ func (m *model) handleStrongsKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	case "j", "down":
 		if m.strongsIndex < len(m.strongsSpans)-1 {
-			m.strongsIndex++
-			m.strongsScroll = 0
+			m.setOverlayStrongsIndex(m.strongsIndex + 1)
 		}
 		return nil
 	case "k", "up":
 		if m.strongsIndex > 0 {
-			m.strongsIndex--
-			m.strongsScroll = 0
+			m.setOverlayStrongsIndex(m.strongsIndex - 1)
 		}
 		return nil
 	case "ctrl+d", "pgdown":
@@ -90,11 +172,10 @@ func (m *model) handleStrongsKey(msg tea.KeyMsg) tea.Cmd {
 		m.strongsScroll = max(0, m.strongsScroll-6)
 		return nil
 	case "g", "home":
-		m.strongsIndex, m.strongsScroll = 0, 0
+		m.setOverlayStrongsIndex(0)
 		return nil
 	case "G", "end":
-		m.strongsIndex = max(0, len(m.strongsSpans)-1)
-		m.strongsScroll = 0
+		m.setOverlayStrongsIndex(max(0, len(m.strongsSpans)-1))
 		return nil
 	case "?", "ctrl+p":
 		m.closeStrongs()
@@ -126,7 +207,7 @@ func (m *model) strongsView() string {
 		title := sectionStyle.Render("STRONG'S") + mutedStyle.Render("  "+m.strongsVerse)
 		count := mutedStyle.Render(fmt.Sprintf("  %d/%d", m.strongsIndex+1, len(m.strongsSpans)))
 		lines = append(lines, title+count, "")
-		head := labelStyle.Render(e.Tag())
+		head := strongTagStyle.Render(e.Tag())
 		if e.Lemma != "" {
 			head += "  " + titleStyle.Render(e.Lemma)
 		}
@@ -135,7 +216,7 @@ func (m *model) strongsView() string {
 		}
 		lines = append(lines, truncateANSI(head, contentW))
 		if word != "" {
-			lines = append(lines, mutedStyle.Render("Verse word: "+word))
+			lines = append(lines, labelStyle.Render("Verse word: "+word))
 		}
 		if e.Gloss != "" {
 			lines = append(lines, "", strongTagStyle.Render(truncateANSI(e.Gloss, contentW)))
@@ -155,30 +236,32 @@ func (m *model) strongsView() string {
 	return lipgloss.Place(max(1, m.width), max(1, m.height), lipgloss.Center, lipgloss.Center, panel)
 }
 
-// strongsSummary renders a short dictionary note for the first tagged word in
-// v, used by the reader sidebar and the search preview.
+// strongsSummary renders a short dictionary note for the focused tagged word
+// in v, used by the reader sidebar and the search preview.
 func (m *model) strongsSummary(v *corpus.Verse, width int) []string {
 	if v == nil || len(v.Strongs()) == 0 || m.strongsDict == nil {
 		return nil
 	}
-	span := v.Strongs()[0]
+	spans := v.Strongs()
+	idx := m.activeStrongsIndex(v)
+	span := spans[idx]
 	e, ok := m.strongsDict.Lookup(span.Greek, span.Number)
 	if !ok {
 		return nil
 	}
-	var lines []string
-	lines = append(lines, sectionStyle.Render("STRONG'S"))
+	lines := []string{sectionStyle.Render("STRONG'S")}
 	head := strongTagStyle.Render(e.Tag())
+	if word := strongWord(v, span); word != "" {
+		head = labelStyle.Render(word+" ") + head
+	}
 	if e.Lemma != "" {
-		head += "  " + labelStyle.Render(e.Lemma)
+		head += "  " + mutedStyle.Render(e.Lemma)
 	}
 	lines = append(lines, truncateANSI(head, width))
 	if e.Gloss != "" {
 		lines = append(lines, truncateANSI(e.Gloss, width))
 	}
-	if len(v.Strongs()) > 1 {
-		lines = append(lines, mutedStyle.Render(fmt.Sprintf("%d tagged words · K for all", len(v.Strongs()))))
-	}
+	lines = append(lines, mutedStyle.Render(fmt.Sprintf("%d/%d tagged · w/W move · K entry", idx+1, len(spans))))
 	return lines
 }
 
@@ -187,14 +270,18 @@ func (m *model) shortStrongsSummary(v *corpus.Verse, width int) string {
 	if v == nil || len(v.Strongs()) == 0 || m.strongsDict == nil {
 		return ""
 	}
-	span := v.Strongs()[0]
+	spans := v.Strongs()
+	span := spans[m.activeStrongsIndex(v)]
 	e, ok := m.strongsDict.Lookup(span.Greek, span.Number)
 	if !ok {
 		return ""
 	}
 	s := strongTagStyle.Render(e.Tag())
+	if word := strongWord(v, span); word != "" {
+		s = labelStyle.Render(word+" ") + s
+	}
 	if e.Gloss != "" {
-		s += "  " + mutedStyle.Render(truncateANSI(e.Gloss, max(1, width-12)))
+		s += "  " + mutedStyle.Render(truncateANSI(e.Gloss, max(1, width-14)))
 	}
 	return truncateANSI(s, width)
 }

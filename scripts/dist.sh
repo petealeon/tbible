@@ -3,7 +3,7 @@
 # packs, offline bundles, and a SHA-256 manifest.
 set -euo pipefail
 
-VERSION="${1:-2.1.0}"
+VERSION="${1:-2.1.1}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST="$ROOT/dist"
 WORK="$DIST/work"

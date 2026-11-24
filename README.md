@@ -7,7 +7,7 @@ search index are built into one executable, so it starts instantly and works
 offline. You can also add public-domain translations, read them side by side,
 look up Strong's numbers, keep notes and bookmarks, and copy any passage.
 
-v2.1 is the current release. Windows 11 with Windows Terminal is the primary
+v2.1.1 is the current release. Windows 11 with Windows Terminal is the primary
 target; Linux and macOS are fully supported. The original bash/fzf application
 is still available as [legacy v1](legacy/v1/README.md) on the `v1` branch.
 
@@ -39,8 +39,9 @@ is still available as [legacy v1](legacy/v1/README.md) on the `v1` branch.
   keys, and press `V` again. `y` then copies the whole passage, including
   ranges that cross chapters. `b` bookmarks it and `n` annotates it. Navigation
   clears a finished selection so it cannot be reused by accident.
-- **Strong's numbers and dictionary.** Press `s` for inline tags in the KJV and
-  `K` on a tagged word to open its STEPBible dictionary entry. Definitions are
+- **Strong's numbers and dictionary.** Press `s` for inline tags in the KJV;
+  each number follows the word it belongs to. Move the word cursor with `w`/`W`
+  and press `K` to open that word's STEPBible dictionary entry. Definitions are
   shown in the sidebar or in a full-screen overlay.
 - **A readable Bible view.** Verse numbers, paragraphs, poetry, section
   headings, psalm titles, red-letter text, supplied-word italics, translation
@@ -104,7 +105,7 @@ features go into v2.
 
 ## Install
 
-Prebuilt binaries are attached to the v2.1.0 release. The installers download
+Prebuilt binaries are attached to the v2.1.1 release. The installers download
 the right archive for your system and verify it against the published SHA-256
 checksums. If you prefer to build from source, the instructions are below.
 
@@ -135,7 +136,7 @@ The `--desktop` flag also installs a Linux desktop entry.
 **Use the offline bundle instead:**
 
 ```sh
-curl -fsSLO https://github.com/petealeon/tbible/releases/download/v2.1.0/tbible-2.1.0-linux-amd64-offline.tar.gz
+curl -fsSLO https://github.com/petealeon/tbible/releases/download/v2.1.1/tbible-2.1.0-linux-amd64-offline.tar.gz
 tar -xzf tbible-2.1.0-linux-amd64-offline.tar.gz
 mkdir -p ~/.config/tbible/packs
 cp packs/*.tbp ~/.config/tbible/packs/
@@ -176,7 +177,7 @@ You can also build from source, which avoids Gatekeeper entirely.
 **Use the offline bundle instead:**
 
 ```sh
-curl -fsSLO https://github.com/petealeon/tbible/releases/download/v2.1.0/tbible-2.1.0-darwin-arm64-offline.tar.gz
+curl -fsSLO https://github.com/petealeon/tbible/releases/download/v2.1.1/tbible-2.1.0-darwin-arm64-offline.tar.gz
 tar -xzf tbible-2.1.0-darwin-arm64-offline.tar.gz
 mkdir -p ~/Library/Application\ Support/tbible/packs
 cp packs/*.tbp ~/Library/Application\ Support/tbible/packs/
@@ -271,7 +272,9 @@ you selected.
 | `Ctrl-H` / `F2` | Open the heatmap from anywhere, including the omnibox |
 | `T` | Choose translations and manage packs |
 | `V` | Start, extend, finish, or clear a passage selection |
-| `s` / `K` | Toggle Strong's tags / open a Strong's entry |
+| `s` | Toggle inline Strong's tags |
+| `w` / `W` | Move the Strong's word cursor |
+| `K` | Open the highlighted Strong's entry |
 | `y`, `b`, `n` | Copy, bookmark, or annotate the verse or passage |
 | `i` | Show or hide notes and footnotes |
 | `v` | Toggle verse numbers |

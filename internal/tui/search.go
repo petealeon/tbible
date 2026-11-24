@@ -66,6 +66,8 @@ var commandDefs = []commandDef{
 	{"numbers", "Toggle verse numbers", "Show or hide verse numbers", "v"},
 	{"footnotes", "Toggle notes and footnotes", "Show or hide your notes and translation footnotes", "i"},
 	{"strongs", "Toggle Strong's numbers", "Show or hide inline Strong's tags (KJV corpus)", "s"},
+	{"strongs-next", "Next Strong's word", "Highlight the next tagged word in the focused verse", "w"},
+	{"strongs-prev", "Previous Strong's word", "Highlight the previous tagged word in the focused verse", "W"},
 	{"strongs-entry", "Strong's dictionary", "Open the focused Strong's entry", "K"},
 	{"sidebar", "Toggle reader sidebar", "Chapter and bookmark details", "Ctrl-B"},
 	{"translations", "Translations", "Choose primary and parallel translations; manage packs", "T"},
@@ -138,6 +140,10 @@ func (m *model) handleSearchKey(msg tea.KeyMsg) tea.Cmd {
 			return m.runCommand("strongs")
 		case "K":
 			return m.runCommand("strongs-entry")
+		case "w":
+			return m.moveStrongsFocus(1)
+		case "W":
+			return m.moveStrongsFocus(-1)
 		case "H":
 			return m.openHeatmap()
 		case "S":
@@ -767,20 +773,15 @@ func (m *model) previewLines(width, height int) []string {
 		}
 	}
 	strongs := v.Strongs()
-	textWidth := width
-	ranges := wrapRanges(v.Text, textWidth)
+	active := -1
 	if m.showStrongs {
-		extra := 0
-		for _, rg := range ranges {
-			extra = max(extra, strongTagWidth(strongs, rg.Start, rg.End))
-		}
-		if extra > 0 {
-			textWidth = max(8, textWidth-extra)
-			ranges = wrapRanges(v.Text, textWidth)
+		if _, idx, _, ok := m.focusedStrongs(); ok {
+			active = idx
 		}
 	}
+	ranges := wrapVerseRanges(v.Text, width, strongs, m.showStrongs)
 	for _, rg := range ranges {
-		lines = append(lines, renderVerseRange(v.Text, rg.Start, rg.End, v.Italics(), v.RedLetter(), strongs, m.showStrongs))
+		lines = append(lines, renderVerseRange(v.Text, rg.Start, rg.End, v.Italics(), v.RedLetter(), strongs, active, m.showStrongs))
 	}
 	if len(m.parallel) > 0 {
 		lines = append(lines, "")
@@ -897,6 +898,16 @@ func (m *model) searchView() string {
 		hints = "Type · Enter open · ↓ results · Ctrl-S save · Esc clear · ? help"
 		if m.width >= 100 {
 			hints = "Type to search · Enter open · ↓ results · Tab section · Ctrl-S save · Esc clear · Ctrl-P commands"
+		}
+	}
+	if m.showStrongs && m.resultsFocused {
+		switch {
+		case m.width >= 120:
+			hints = "Enter open · ↑↓ select · Tab section · y copy · b bookmark · n note · w/W word · K entry · H map · f scope · ? help"
+		case m.width >= 100:
+			hints = "Enter open · ↑↓ select · y copy · b bookmark · n note · w/W word · K entry · H map · ? help"
+		default:
+			hints = "y copy · b mark · n note · w/W word · K entry · ↑↓ · Enter open · ? help"
 		}
 	}
 	return header + "\n" + truncateANSI(line2, m.width) + "\n" + interp + "\n\n" + block + "\n" + m.footer(hints)

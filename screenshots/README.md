@@ -1,4 +1,4 @@
-Screenshots embedded in the root `README.md`, captured from v2.1:
+Screenshots embedded in the root `README.md`, captured from v2.1.1:
 
 - `tbible-v2.png` — main search results with the live reader preview.
 - `tbible-v2-heatmap.png` — full result heatmap.

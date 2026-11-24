@@ -6,7 +6,7 @@
 # bin/tbible from this checkout.
 set -euo pipefail
 
-VERSION="${TBIBLE_VERSION:-2.1.0}"
+VERSION="${TBIBLE_VERSION:-2.1.1}"
 REPO="petealeon/tbible"
 BIN_DIR="${TBIBLE_BIN_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}"
 MODE="binary"

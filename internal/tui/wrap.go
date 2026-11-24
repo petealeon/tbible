@@ -115,9 +115,157 @@ func covered(spans []corpus.Span, at int) bool {
 	return false
 }
 
+// verseWrapAtom is one word plus its trailing spaces. tagWidth is the extra
+// display width of the Strong's code attached to that word.
+type verseWrapAtom struct {
+	start, wordEnd, end int
+	width, tagWidth     int
+}
+
+func displayWidth(s string) int {
+	return runewidth.StringWidth(s)
+}
+
+func strongTagCellWidth(tag string) int {
+	// One separator cell plus the code itself.
+	return 1 + runewidth.StringWidth(tag)
+}
+
+// verseWrapAtoms splits text into word-sized atoms while accounting for the
+// real width of any Strong's tag shown after each word.
+func verseWrapAtoms(text string, strongs []corpus.StrongSpan, showStrongs bool) []verseWrapAtom {
+	var atoms []verseWrapAtom
+	for i := 0; i < len(text); {
+		for i < len(text) {
+			r, size := utf8.DecodeRuneInString(text[i:])
+			if r != ' ' {
+				break
+			}
+			i += size
+		}
+		if i >= len(text) {
+			break
+		}
+		start := i
+		for i < len(text) {
+			r, size := utf8.DecodeRuneInString(text[i:])
+			if r == ' ' {
+				break
+			}
+			i += size
+		}
+		wordEnd := i
+		for i < len(text) {
+			r, size := utf8.DecodeRuneInString(text[i:])
+			if r != ' ' {
+				break
+			}
+			i += size
+		}
+		end := i
+		atoms = append(atoms, verseWrapAtom{start: start, wordEnd: wordEnd, end: end})
+	}
+	if showStrongs {
+		for _, s := range strongs {
+			if s.End <= 0 || s.End > len(text) {
+				continue
+			}
+			// Multiword tags are drawn after the last word of the span, so
+			// reserve their width on that atom rather than on every word.
+			for i := range atoms {
+				if s.End > atoms[i].start && s.End <= atoms[i].end {
+					atoms[i].tagWidth += strongTagCellWidth(s.Tag())
+					break
+				}
+			}
+		}
+	}
+	for i := range atoms {
+		atoms[i].width = displayWidth(text[atoms[i].start:atoms[i].end]) + atoms[i].tagWidth
+	}
+	return atoms
+}
+
+// hardSplitRanges splits a single overlong token into display-width-sized
+// byte ranges. It is only reached on very narrow terminals.
+func hardSplitRanges(s string, width int) []corpus.Span {
+	var out []corpus.Span
+	start, cells := 0, 0
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		w := runewidth.RuneWidth(r)
+		if cells+w > width && i > start {
+			out = append(out, corpus.Span{Start: start, End: i})
+			start, cells = i, 0
+		}
+		cells += w
+		i += size
+	}
+	if start < len(s) {
+		out = append(out, corpus.Span{Start: start, End: len(s)})
+	}
+	return out
+}
+
+// wrapVerseRanges wraps verse text into byte ranges no wider than width cells,
+// counting inline Strong's tags as part of the word they annotate.
+func wrapVerseRanges(text string, width int, strongs []corpus.StrongSpan, showStrongs bool) []corpus.Span {
+	if width < 1 {
+		width = 1
+	}
+	if text == "" {
+		return []corpus.Span{{Start: 0, End: 0}}
+	}
+	atoms := verseWrapAtoms(text, strongs, showStrongs)
+	if len(atoms) == 0 {
+		return []corpus.Span{{Start: 0, End: len(text)}}
+	}
+	var out []corpus.Span
+	lineStart, cells := 0, 0
+	for _, atom := range atoms {
+		if atom.width > width {
+			if cells > 0 {
+				out = append(out, corpus.Span{Start: lineStart, End: atom.start})
+				cells = 0
+			}
+			for _, ch := range hardSplitRanges(text[atom.start:atom.wordEnd], max(1, width-atom.tagWidth)) {
+				out = append(out, corpus.Span{
+					Start: atom.start + ch.Start,
+					End:   atom.start + ch.End,
+				})
+			}
+			lineStart = atom.wordEnd
+			cells = displayWidth(text[atom.wordEnd:atom.end])
+			continue
+		}
+		if cells > 0 && cells+atom.width > width {
+			out = append(out, corpus.Span{Start: lineStart, End: atom.start})
+			lineStart, cells = atom.start, 0
+		}
+		cells += atom.width
+	}
+	if lineStart < len(text) {
+		out = append(out, corpus.Span{Start: lineStart, End: len(text)})
+	}
+	if len(out) == 0 {
+		out = append(out, corpus.Span{Start: 0, End: len(text)})
+	}
+	return out
+}
+
+func strongIndexAt(spans []corpus.StrongSpan, at int) int {
+	for i, s := range spans {
+		if at >= s.Start && at < s.End {
+			return i
+		}
+	}
+	return -1
+}
+
 // renderVerseRange renders text[a:b] with italic and red-letter styling. When
-// showStrongs is set, each tagged word gets a compact superscript number.
-func renderVerseRange(text string, a, b int, italics, red []corpus.Span, strongs []corpus.StrongSpan, showStrongs bool) string {
+// showStrongs is set, each tag is emitted immediately after the word it
+// annotates, and the active tag is highlighted.
+func renderVerseRange(text string, a, b int, italics, red []corpus.Span, strongs []corpus.StrongSpan, active int, showStrongs bool) string {
 	if a >= b {
 		return ""
 	}
@@ -130,6 +278,18 @@ func renderVerseRange(text string, a, b int, italics, red []corpus.Span, strongs
 	for _, s := range red {
 		bounds = append(bounds, s.Start, s.End)
 	}
+	if showStrongs {
+		for _, s := range strongs {
+			if s.Start > a && s.Start < b {
+				bounds = append(bounds, s.Start)
+			}
+			// Use the real span end, not the wrapped line end: a tag must
+			// appear once, after the last word it annotates.
+			if s.End > a && s.End <= b {
+				bounds = append(bounds, s.End)
+			}
+		}
+	}
 	sort.Ints(bounds)
 	var out strings.Builder
 	for i := 0; i+1 < len(bounds); i++ {
@@ -140,37 +300,36 @@ func renderVerseRange(text string, a, b int, italics, red []corpus.Span, strongs
 		seg := text[x:y]
 		it := covered(italics, x)
 		rd := covered(red, x)
+		style := textStyle
 		switch {
 		case it && rd:
-			out.WriteString(redItalic.Render(seg))
+			style = redItalic
 		case it:
-			out.WriteString(italicStyle.Render(seg))
+			style = italicStyle
 		case rd:
-			out.WriteString(redStyle.Render(seg))
-		default:
-			out.WriteString(textStyle.Render(seg))
+			style = redStyle
 		}
+		if showStrongs && active >= 0 && strongIndexAt(strongs, x) == active {
+			// Reverse video is used instead of underline: this lipgloss version
+			// emits per-character escapes for underlined strings.
+			style = style.Bold(true).Reverse(true)
+		}
+		out.WriteString(style.Render(seg))
 		if showStrongs {
-			for _, s := range strongs {
-				if s.Start >= x && s.Start < y {
-					out.WriteString(strongTagStyle.Render("·" + s.Tag()))
+			for si, s := range strongs {
+				if s.End != y || s.End <= a || s.End > b {
+					continue
+				}
+				tag := "·" + s.Tag()
+				if si == active {
+					out.WriteString(strongActiveTagStyle.Render(tag))
+				} else {
+					out.WriteString(strongTagStyle.Render(tag))
 				}
 			}
 		}
 	}
 	return out.String()
-}
-
-// strongTagWidth estimates the extra cells needed to show Strong's tags in a
-// wrapped text range, so lines do not run past the column width.
-func strongTagWidth(spans []corpus.StrongSpan, a, b int) int {
-	n := 0
-	for _, s := range spans {
-		if s.Start >= a && s.Start < b {
-			n++
-		}
-	}
-	return n * 6
 }
 
 // highlightWords bolds whole-token matches in plain text. Tokens are folded

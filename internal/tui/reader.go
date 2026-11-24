@@ -136,19 +136,15 @@ func (m *model) readerLayout(width int) ([]readerLine, map[int]int) {
 		textWidth := max(8, width-prefixWidth)
 		pad := strings.Repeat(" ", prefixWidth)
 		strongs := v.Strongs()
-		ranges := wrapRanges(v.Text, textWidth)
-		if m.reader.showStrongs {
-			extra := 0
-			for _, rg := range ranges {
-				extra = max(extra, strongTagWidth(strongs, rg.Start, rg.End))
-			}
-			if extra > 0 {
-				textWidth = max(8, textWidth-extra)
-				ranges = wrapRanges(v.Text, textWidth)
+		active := -1
+		if m.reader.showStrongs && vn == m.reader.verse {
+			if _, idx, _, ok := m.focusedStrongs(); ok {
+				active = idx
 			}
 		}
+		ranges := wrapVerseRanges(v.Text, textWidth, strongs, m.reader.showStrongs)
 		for j, rg := range ranges {
-			text := renderVerseRange(v.Text, rg.Start, rg.End, v.Italics(), v.RedLetter(), strongs, m.reader.showStrongs)
+			text := renderVerseRange(v.Text, rg.Start, rg.End, v.Italics(), v.RedLetter(), strongs, active, m.reader.showStrongs)
 			if j == 0 {
 				lines = append(lines, readerLine{text: prefix + text, verse: vn})
 			} else {
@@ -324,6 +320,10 @@ func (m *model) readerKey(msg tea.KeyMsg) tea.Cmd {
 		return m.runCommand("strongs")
 	case "K":
 		return m.runCommand("strongs-entry")
+	case "w":
+		return m.moveStrongsFocus(1)
+	case "W":
+		return m.moveStrongsFocus(-1)
 	case "v":
 		return m.runCommand("numbers")
 	case "ctrl+b":
@@ -506,6 +506,18 @@ func (m *model) readerView() string {
 		hints = "j/k verse · V select · [/] chapter · {/} book · Space page · " + actionHints(m.width) + " · i notes & footnotes · v numbers · / search · L library · ? help · Esc home"
 	} else if m.width < 100 {
 		hints = actionHints(m.width) + " · j/k verse · V select · i notes · ? help"
+	}
+	if m.showStrongs {
+		switch {
+		case m.selecting:
+			hints = "PASSAGE SELECTED · j/k extend · w/W word · y copy · V finish · Esc cancel"
+		case m.width >= 120:
+			hints = "y copy · b bookmark · n note · w/W word · K entry · j/k verse · V select · [/] chapter · i notes · / search · ? help"
+		case m.width >= 100:
+			hints = "y copy · b bookmark · n note · w/W word · K entry · j/k verse · V select · [/] chapter · ? help"
+		default:
+			hints = "y copy · b mark · n note · w/W word · K entry · j/k verse · V select · ? help"
+		}
 	}
 	return header + "\n" + nav + "\n\n" + block + "\n" + m.footer(hints)
 }
