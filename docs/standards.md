@@ -20,8 +20,8 @@ environments.
 - No telemetry, analytics, crash reporting, update checks, or network traffic
   on startup, search, render, or save.
 - Network access is allowed only inside an explicit user action: catalog
-  refresh or pack install. Every request uses a context and a timeout and
-  bounds the response body.
+  refresh, pack install, `tbible --check-update`, or `tbible --update`. Every
+  request uses a context and a timeout and bounds the response body.
 - Ephemeral mode must write no state and must refuse network actions. Never
   cache downloaded bytes to disk in that mode.
 - Do not add instructions for bypassing corporate proxies, network filters, or

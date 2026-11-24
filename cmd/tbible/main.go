@@ -2,10 +2,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"runtime/debug"
 	"strings"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/petealeon/tbible/v2/internal/library"
 	"github.com/petealeon/tbible/v2/internal/ref"
 	"github.com/petealeon/tbible/v2/internal/search"
+	"github.com/petealeon/tbible/v2/internal/selfupdate"
 	"github.com/petealeon/tbible/v2/internal/tui"
 	"github.com/petealeon/tbible/v2/internal/version"
 )
@@ -31,6 +34,9 @@ func main() {
 		translation = flag.String("translation", "", "translation id: kjv or an installed pack")
 		listPacks   = flag.Bool("list-translations", false, "list installed translations and exit")
 		ephemeral   = flag.Bool("ephemeral", false, "keep notes, bookmarks and history in memory only (or set TBIBLE_EPHEMERAL=1)")
+		update      = flag.Bool("update", false, "check for a newer release and install it")
+		updateShort = flag.Bool("u", false, "alias for --update")
+		checkUpdate = flag.Bool("check-update", false, "check for a newer release without installing")
 	)
 	flag.Usage = usage
 	flag.Parse()
@@ -42,6 +48,10 @@ func main() {
 	}
 
 	switch {
+	case *checkUpdate:
+		runSelfUpdate(false, ephemeralOn)
+	case *update || *updateShort:
+		runSelfUpdate(true, ephemeralOn)
 	case *listPacks:
 		listTranslations()
 	case *query != "":
@@ -67,6 +77,62 @@ func main() {
 			fail(err)
 		}
 	}
+}
+
+func runSelfUpdate(install, ephemeral bool) {
+	if err := selfUpdate(install, ephemeral); err != nil {
+		fail(err)
+	}
+}
+
+func selfUpdate(install, ephemeral bool) error {
+	if ephemeral {
+		return fmt.Errorf("update commands are disabled in ephemeral mode")
+	}
+
+	cfg := selfupdate.Config{
+		APIBase:     os.Getenv("TBIBLE_API_BASE"),
+		ReleaseBase: os.Getenv("TBIBLE_RELEASE_BASE"),
+	}
+	ctx := context.Background()
+	rel, err := cfg.Latest(ctx)
+	if err != nil {
+		return fmt.Errorf("check for updates: %w", err)
+	}
+	newer, err := rel.NewerThan(version.Version)
+	if err != nil {
+		return fmt.Errorf("compare versions: %w", err)
+	}
+	if !newer {
+		fmt.Printf("tbible %s is up to date.\n", version.Version)
+		return nil
+	}
+	if !install {
+		fmt.Printf("tbible %s is available (installed %s). Run tbible --update to install.\n", rel.Version, version.Version)
+		return nil
+	}
+
+	fmt.Printf("downloading tbible %s...\n", rel.Version)
+	dl, err := cfg.Fetch(ctx, rel)
+	if err != nil {
+		return fmt.Errorf("download update: %w", err)
+	}
+	defer dl.Cleanup()
+
+	target, err := selfupdate.ExecutablePath()
+	if err != nil {
+		return fmt.Errorf("locate installed executable: %w", err)
+	}
+	fmt.Printf("installing to %s...\n", target)
+	if err := selfupdate.Install(dl.Path, target); err != nil {
+		return fmt.Errorf("install update: %w", err)
+	}
+	if runtime.GOOS == "windows" {
+		fmt.Printf("tbible %s is staged. It will be installed when this process exits; restart tbible to use it.\n", rel.Version)
+	} else {
+		fmt.Printf("updated to tbible %s. Restart tbible to use it.\n", rel.Version)
+	}
+	return nil
 }
 
 func runSearchCommand(raw, scopeFlag, bookFlag string, limit int, asJSON, plain bool, translationID string) {
@@ -129,6 +195,8 @@ Usage:
   tbible --search QUERY       rank verses for a word, phrase, or reference
   tbible QUERY                shorthand for --search
   tbible --list-translations  show installed translations
+  tbible --check-update       check GitHub releases for a newer version
+  tbible --update, -u         download, verify, and install a newer release
 
   Press T inside the TUI to choose a primary translation, show parallel
   translations, or install a downloadable pack.
@@ -149,6 +217,8 @@ Examples:
   tbible --read "Psalms 23" --plain
   tbible --search "faith" --scope nt --limit 10
   tbible --search "\"still waters\"" --json
+  tbible --check-update
+  tbible --update
 `)
 }
 

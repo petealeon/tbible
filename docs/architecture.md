@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the v2.1 design. It is for contributors; the README is
+This document describes the v2.2 design. It is for contributors; the README is
 the user-facing guide.
 
 ## Shape of the program
@@ -24,6 +24,7 @@ internal/catalog embedded catalog plus explicit refresh/download
 internal/library translation resolution and bounded LRU cache
 internal/store  JSON state, settings, ephemeral mode
 internal/tui    Bubble Tea model, screens, overlays, rendering helpers
+internal/selfupdate explicit GitHub release check, verified download, binary swap
 internal/version build-time version string
 ```
 

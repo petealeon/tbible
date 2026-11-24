@@ -7,7 +7,7 @@ search index are built into one executable, so it starts instantly and works
 offline. You can also add public-domain translations, read them side by side,
 look up Strong's numbers, keep notes and bookmarks, and copy any passage.
 
-v2.1.2 is the current release. Windows 11 with Windows Terminal is the primary
+v2.2.0 is the current release. Windows 11 with Windows Terminal is the primary
 target; Linux and macOS are fully supported. The original bash/fzf application
 is still available as [legacy v1](legacy/v1/README.md) on the `v1` branch.
 
@@ -60,10 +60,15 @@ is still available as [legacy v1](legacy/v1/README.md) on the `v1` branch.
   available as small, data-only packs. Press `T` to choose a primary
   translation, show up to three parallel translations, install or remove packs,
   or explicitly refresh the catalog. Each visible translation is labelled.
+- **CLI self-update.** `tbible --check-update` reports whether a newer release
+  exists. `tbible --update` (or `-u`) downloads the right release asset, verifies
+  its SHA-256 checksum, and replaces the running executable. Notes, settings,
+  and installed packs are left alone.
 - **Quiet by design.** No telemetry, no startup network calls, and no background
-  updates. The only network requests happen when you explicitly install a pack
-  or refresh the catalog. `--ephemeral` keeps notes, bookmarks, and history in
-  memory only. `Ctrl-X` blanks the screen instantly; any key restores it.
+  updates. The only network requests happen when you explicitly install a pack,
+  refresh the catalog, check for a release, or update the binary. `--ephemeral`
+  keeps notes, bookmarks, and history in memory only. `Ctrl-X` blanks the screen
+  instantly; any key restores it.
 - **Calendar view.** Browse notes, bookmarks, and reading history by date in a
   Sunday-first heatmap. Colours show the dominant source for each day, and you
   can filter the entries shown for that day.
@@ -100,14 +105,15 @@ is still available as [legacy v1](legacy/v1/README.md) on the `v1` branch.
 - **Better Windows support.** v2 has a native Windows executable and works best
   in Windows Terminal; there is no fzf, SQLite, or Python dependency.
 - **More than one translation.** v2.1 adds downloadable public-domain packs,
-  parallel reading, Strong's numbers, and arbitrary passage selection.
+  parallel reading, Strong's numbers, and arbitrary passage selection. v2.2 adds
+  a checksum-verified CLI updater.
 
 The v1 application is still supported for people who prefer its workflow. New
 features go into v2.
 
 ## Install
 
-Prebuilt binaries are attached to the v2.1.2 release. The installers download
+Prebuilt binaries are attached to the v2.2.0 release. The installers download
 the right archive for your system and verify it against the published SHA-256
 checksums. If you prefer to build from source, the instructions are below.
 
@@ -138,8 +144,8 @@ The `--desktop` flag also installs a Linux desktop entry.
 **Use the offline bundle instead:**
 
 ```sh
-curl -fsSLO https://github.com/petealeon/tbible/releases/download/v2.1.2/tbible-2.1.2-linux-amd64-offline.tar.gz
-tar -xzf tbible-2.1.2-linux-amd64-offline.tar.gz
+curl -fsSLO https://github.com/petealeon/tbible/releases/download/v2.2.0/tbible-2.2.0-linux-amd64-offline.tar.gz
+tar -xzf tbible-2.2.0-linux-amd64-offline.tar.gz
 mkdir -p ~/.config/tbible/packs
 cp packs/*.tbp ~/.config/tbible/packs/
 ./tbible
@@ -179,8 +185,8 @@ You can also build from source, which avoids Gatekeeper entirely.
 **Use the offline bundle instead:**
 
 ```sh
-curl -fsSLO https://github.com/petealeon/tbible/releases/download/v2.1.2/tbible-2.1.2-darwin-arm64-offline.tar.gz
-tar -xzf tbible-2.1.2-darwin-arm64-offline.tar.gz
+curl -fsSLO https://github.com/petealeon/tbible/releases/download/v2.2.0/tbible-2.2.0-darwin-arm64-offline.tar.gz
+tar -xzf tbible-2.2.0-darwin-arm64-offline.tar.gz
 mkdir -p ~/Library/Application\ Support/tbible/packs
 cp packs/*.tbp ~/Library/Application\ Support/tbible/packs/
 ./tbible
@@ -228,7 +234,7 @@ checksum, then choose **More info → Run anyway**.
 
 **Use the offline bundle instead:**
 
-Download `tbible-2.1.2-windows-amd64-offline.zip` from the release page, then in
+Download `tbible-2.2.0-windows-amd64-offline.zip` from the release page, then in
 PowerShell:
 
 ```powershell
@@ -257,6 +263,26 @@ To install a prebuilt binary from a local checkout instead:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
+
+## Update
+
+Installed binaries can update themselves from the project's GitHub releases.
+This is always an explicit command; nothing checks while the app starts.
+
+```sh
+tbible --check-update   # report the newest release, without downloading
+tbible --update         # same as above, then download, verify, and install
+tbible -u               # shorthand for --update
+```
+
+The updater verifies the release's SHA-256 manifest before replacing anything.
+Your state file, notes, bookmarks, and installed translation packs are not
+changed. On Windows the new executable is staged and swapped in after the
+current process exits, so close any running `tbible` windows before restarting.
+
+Both update commands are disabled in ephemeral mode. On restricted machines
+that cannot reach GitHub, use the offline bundle linked from the release page
+instead.
 
 ## A quick tour
 

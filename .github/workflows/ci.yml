@@ -90,11 +90,11 @@ jobs:
           cache: true
 
       - name: Build archives
-        run: make dist VERSION=2.1.2
+        run: make dist VERSION=2.2.0
 
       - name: Verify checksums
         working-directory: dist
-        run: sha256sum -c tbible-2.1.2-checksums.txt
+        run: sha256sum -c tbible-2.2.0-checksums.txt
 
       - uses: actions/upload-artifact@v4
         with:

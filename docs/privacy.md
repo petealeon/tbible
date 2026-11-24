@@ -14,14 +14,17 @@ reading the Bible, including on a shared or monitored computer.
 
 ## What requires a deliberate action
 
-Only two actions use the network:
+Only these actions use the network:
 
 1. `T` → `U` refreshes the translation catalog.
 2. `T` → `Enter` on a catalog entry downloads and verifies a pack.
+3. `tbible --check-update` asks GitHub for the latest release version.
+4. `tbible --update` (or `-u`) downloads and verifies a release asset.
 
-Both are foreground, user-initiated commands with visible status text. They are
-refused when ephemeral mode is active. The embedded KJV, Strong's dictionary,
-search, notes, and heatmap work with networking completely unavailable.
+All are foreground, user-initiated commands with visible status text. Every
+network action, including both update commands, is refused when ephemeral mode
+is active. The embedded KJV, Strong's dictionary, search, notes, and heatmap
+work with networking completely unavailable.
 
 ## Local state
 

@@ -1,3 +1,20 @@
+# tbible 2.2.0
+
+This release adds an explicit CLI updater. The corpus, Strong's data, pack
+catalog, on-disk state, and TUI are unchanged.
+
+- `tbible --check-update` reports whether a newer GitHub release is available.
+- `tbible --update`, also available as `tbible -u`, downloads the correct
+  release asset for the current OS and architecture, verifies its SHA-256
+  checksum, and replaces the installed executable.
+- Updates do not touch notes, bookmarks, settings, catalog data, or translation
+  packs. There is still no startup network access, background check, or
+  telemetry.
+- Windows stages the new executable and swaps it in after the current process
+  exits; restart `tbible` to use the update.
+- Both update commands are refused in ephemeral mode. Restricted machines
+  should continue to use the offline bundles.
+
 # tbible 2.1.2
 
 This patch clarifies how Strong's tags work in downloadable translations. No
